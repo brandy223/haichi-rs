@@ -1,0 +1,81 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN_NAME: haichi
+  TARGET: x86_64-unknown-linux-gnu
+  # Keep in sync with FEDORA_VERSION in .devcontainer/Containerfile.
+  FEDORA_IMAGE: registry.fedoraproject.org/fedora:44
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Verify
+    runs-on: ubuntu-latest
+    container: ${{ env.FEDORA_IMAGE }}
+    steps:
+      - name: Install prerequisites
+        run: dnf install -y git gcc curl tar gzip xz
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo test --verbose --locked
+
+  build:
+    name: Build release binary
+    needs: check
+    runs-on: ubuntu-latest
+    container: ${{ env.FEDORA_IMAGE }}
+    steps:
+      - name: Install prerequisites
+        run: dnf install -y git gcc curl tar gzip xz
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - run: strip target/release/${{ env.BIN_NAME }}
+      - name: Package archive
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME}"
+          dist="${BIN_NAME}-${version}-${TARGET}"
+          mkdir "$dist"
+          cp "target/release/${BIN_NAME}" "$dist"/
+          cp README.md LICENSE "$dist"/
+          tar -czf "${dist}.tar.gz" "$dist"
+          sha256sum "${dist}.tar.gz" > "${dist}.tar.gz.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: |
+            ${{ env.BIN_NAME }}-*.tar.gz
+            ${{ env.BIN_NAME }}-*.tar.gz.sha256
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.BIN_NAME }}-*.tar.gz
+            ${{ env.BIN_NAME }}-*.tar.gz.sha256
+          generate_release_notes: true

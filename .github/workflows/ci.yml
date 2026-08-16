@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [master, dev]
+  pull_request:
+    branches: [master, dev]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep in sync with FEDORA_VERSION in .devcontainer/Containerfile.
+  FEDORA_IMAGE: registry.fedoraproject.org/fedora:44
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    container: ${{ env.FEDORA_IMAGE }}
+    steps:
+      - name: Install prerequisites
+        run: dnf install -y git gcc curl tar gzip xz
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    container: ${{ env.FEDORA_IMAGE }}
+    steps:
+      - name: Install prerequisites
+        run: dnf install -y git gcc curl tar gzip xz
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    container: ${{ env.FEDORA_IMAGE }}
+    steps:
+      - name: Install prerequisites
+        run: dnf install -y git gcc curl tar gzip xz
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --verbose --locked
+      - run: cargo test --verbose --locked
+
+  msrv:
+    name: MSRV (1.85)
+    runs-on: ubuntu-latest
+    container: ${{ env.FEDORA_IMAGE }}
+    steps:
+      - name: Install prerequisites
+        run: dnf install -y git gcc curl tar gzip xz
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked
+
+  audit:
+    name: Security audit
+    runs-on: ubuntu-latest
+    container: ${{ env.FEDORA_IMAGE }}
+    steps:
+      - name: Install prerequisites
+        run: dnf install -y git gcc curl tar gzip xz
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-audit
+      - run: cargo audit
