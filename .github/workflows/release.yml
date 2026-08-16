@@ -9,8 +9,6 @@ env:
   CARGO_TERM_COLOR: always
   BIN_NAME: haichi
   TARGET: x86_64-unknown-linux-gnu
-  # Keep in sync with FEDORA_VERSION in .devcontainer/Containerfile.
-  FEDORA_IMAGE: registry.fedoraproject.org/fedora:44
 
 permissions:
   contents: read
@@ -19,7 +17,7 @@ jobs:
   check:
     name: Verify
     runs-on: ubuntu-latest
-    container: ${{ env.FEDORA_IMAGE }}
+    container: registry.fedoraproject.org/fedora:44 # sync with FEDORA_VERSION in .devcontainer/Containerfile
     steps:
       - name: Install prerequisites
         run: dnf install -y git gcc curl tar gzip xz
@@ -36,7 +34,7 @@ jobs:
     name: Build release binary
     needs: check
     runs-on: ubuntu-latest
-    container: ${{ env.FEDORA_IMAGE }}
+    container: registry.fedoraproject.org/fedora:44 # sync with FEDORA_VERSION in .devcontainer/Containerfile
     steps:
       - name: Install prerequisites
         run: dnf install -y git gcc curl tar gzip xz
