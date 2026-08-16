@@ -1,6 +1,6 @@
 # Suppresses suggestions that use APIs newer than your MSRV. Without this,
 # clippy will happily tell you to use a std function you can't compile against.
-msrv = "1.85"
+msrv = "1.87"
 
 avoid-breaking-exported-api = false   # true = clippy withholds lints that would
                                       # change a public signature. Set true post-1.0.

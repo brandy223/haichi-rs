@@ -54,14 +54,14 @@ jobs:
       - run: cargo test --verbose --locked
 
   msrv:
-    name: MSRV (1.85)
+    name: MSRV (1.87)
     runs-on: ubuntu-latest
     container: registry.fedoraproject.org/fedora:44 # sync with FEDORA_VERSION in .devcontainer/Containerfile
     steps:
       - name: Install prerequisites
         run: dnf install -y git gcc curl tar gzip xz
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: dtolnay/rust-toolchain@bc540ba06a4ccee415bb241490e0b25ee8e7d315 # 1.85.0
+      - uses: dtolnay/rust-toolchain@6a393d88d2772701bf30bc3fd30f9cffa24e5a08 # 1.87.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo build --locked
 
