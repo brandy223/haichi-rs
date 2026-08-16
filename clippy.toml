@@ -1,0 +1,32 @@
+# Suppresses suggestions that use APIs newer than your MSRV. Without this,
+# clippy will happily tell you to use a std function you can't compile against.
+msrv = "1.85"
+
+avoid-breaking-exported-api = false   # true = clippy withholds lints that would
+                                      # change a public signature. Set true post-1.0.
+
+# --- thresholds ------------------------------------------------------------
+cognitive-complexity-threshold = 30
+too-many-arguments-threshold = 8
+too-many-lines-threshold = 200
+type-complexity-threshold = 350
+enum-variant-size-threshold = 256     # bytes, before large_enum_variant fires
+trivial-copy-size-limit = 16
+single-char-binding-names-threshold = 4
+
+# --- policy enforced by the compiler instead of by code review -------------
+disallowed-methods = [
+    { path = "std::thread::sleep", reason = "blocks a tokio worker; use tokio::time::sleep" },
+    { path = "std::process::exit", reason = "skips destructors and log flushing; return from main" },
+    { path = "std::time::SystemTime::now", reason = "not monotonic and untestable; inject a Clock" },
+]
+
+disallowed-types = [
+    { path = "std::sync::Mutex", reason = "use tokio::sync::Mutex across .await, parking_lot::Mutex otherwise" },
+    { path = "std::collections::HashMap", reason = "use ahash::AHashMap; SipHash is a real cost on hot paths" },
+]
+
+disallowed-macros = [
+    { path = "std::print", reason = "structured logging only — use tracing::info!" },
+    { path = "std::println", reason = "structured logging only — use tracing::info!" },
+]

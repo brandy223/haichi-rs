@@ -1,0 +1,28 @@
+# ===========================================================================
+# rustfmt.toml (or .rustfmt.toml — identical, pick one). Applies to the whole
+# workspace: rustfmt looks upward from each file, and there is no way for a
+# member crate to override the root.
+#
+# `cargo fmt` reformats unconditionally; `cargo fmt --check` exits non-zero
+# with a diff and is what CI should run.
+# ===========================================================================
+
+# Must match your edition or rustfmt mis-parses newer syntax.
+edition = "2024"
+style_edition = "2024"     # formatting rules themselves are versioned (1.75+)
+
+max_width = 100
+tab_spaces = 4
+hard_tabs = false
+newline_style = "Unix"
+
+# How eagerly to collapse short constructs onto one line.
+# "Default" | "Off" (never collapse) | "Max" (always, up to max_width)
+use_small_heuristics = "Default"
+
+reorder_imports = true
+reorder_modules = true
+remove_nested_parens = true
+match_block_trailing_comma = false
+use_field_init_shorthand = true
+use_try_shorthand = true

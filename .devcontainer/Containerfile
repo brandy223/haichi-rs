@@ -1,0 +1,104 @@
+ARG FEDORA_VERSION=44
+
+FROM registry.fedoraproject.org/fedora:${FEDORA_VERSION}
+
+ARG USERNAME=dev
+ARG USER_UID=1000
+ARG USER_GID=${USER_UID}
+ARG ZSH_PLUGINS_DIR=/usr/share/zsh/plugins
+SHELL ["/bin/bash", "-euo", "pipefail", "-c"]
+
+# Install essential packages in a single layer
+USER root
+RUN dnf update -y && dnf install -y --setopt=install_weak_deps=True \
+    ca-certificates \
+    curl \
+    git \
+    gnupg2 \
+    jq \
+    perf \
+    mold \
+    clang \
+    sccache \
+    unzip \
+    openssl-devel \
+    perl-core \
+    which \
+    gh \
+    wget2-wget \
+    zsh \
+    nodejs22 \
+    nodejs22-npm \
+    rustup \
+    && dnf clean all
+
+# Create non-root user with sudo access
+RUN groupadd --gid "${USER_GID}" "${USERNAME}" \
+    && useradd --uid "${USER_UID}" --gid "${USER_GID}" --shell /bin/zsh --create-home "${USERNAME}" \
+    && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" > "/etc/sudoers.d/${USERNAME}" \
+    && chmod 0440 "/etc/sudoers.d/${USERNAME}"
+
+# Rust installation
+# Install into a shared location so the non-root dev user (not just root) can
+# use rustup/cargo, and bake it onto PATH for all subsequent shells.
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:${PATH}
+RUN rustup-init -y --no-modify-path \
+    && chmod -R a+rwX "${RUSTUP_HOME}" "${CARGO_HOME}"
+
+# Install zsh plugins
+RUN git clone --depth=1 https://github.com/zsh-users/zsh-autosuggestions "${ZSH_PLUGINS_DIR}/zsh-autosuggestions" \
+    && git clone --depth=1 https://github.com/zsh-users/zsh-syntax-highlighting "${ZSH_PLUGINS_DIR}/zsh-syntax-highlighting" \
+    && git clone --depth=1 https://github.com/romkatv/powerlevel10k.git "${ZSH_PLUGINS_DIR}/powerlevel10k"
+
+# Configure zsh for the dev user
+RUN cat <<'EOF' > /home/${USERNAME}/.zshrc
+# Enable Powerlevel10k instant prompt
+if [[ -r "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh" ]]; then
+  source "${XDG_CACHE_HOME:-$HOME/.cache}/p10k-instant-prompt-${(%):-%n}.zsh"
+fi
+
+# Powerlevel10k theme
+source /usr/share/zsh/plugins/powerlevel10k/powerlevel10k.zsh-theme
+
+# History
+HISTFILE=~/.zsh_history
+HISTSIZE=10000
+SAVEHIST=10000
+setopt APPEND_HISTORY
+setopt INC_APPEND_HISTORY
+setopt SHARE_HISTORY
+setopt HIST_IGNORE_DUPS
+setopt HIST_IGNORE_ALL_DUPS
+setopt HIST_REDUCE_BLANKS
+
+# Plugins
+source /usr/share/zsh/plugins/zsh-autosuggestions/zsh-autosuggestions.zsh
+source /usr/share/zsh/plugins/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh
+
+# Load p10k config
+[[ ! -f ~/.p10k.zsh ]] || source ~/.p10k.zsh
+
+export PATH=$PATH:/home/${USERNAME}/.local/bin:/home/${USERNAME}/.cargo/bin
+
+# Aliases
+alias ll='ls -la'
+alias gcb='git checkout -b'
+alias gco='git checkout'
+alias gcm='git commit -m'
+alias gpl='git pull'
+alias gps='git push'
+
+EOF
+
+# Copy p10k configuration
+COPY --chown=${USERNAME}:${USERNAME} .p10k.zsh /home/${USERNAME}/.p10k.zsh
+RUN chown "${USERNAME}:${USERNAME}" /home/${USERNAME}/.zshrc
+
+RUN mkdir -p /home/${USERNAME}/workspace && \
+    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}/workspace
+
+# Install Claude Code
+USER ${USERNAME}
+RUN curl -fsSL https://claude.ai/install.sh | bash
