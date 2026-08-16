@@ -157,6 +157,42 @@ so it means "re-run `GetCurrentState`".
   (`chown gdm:gdm`, `restorecon` on SELinux). Out of scope.
 - `color-mode`, `rgb-range` and luminance (`gdctl pref`) are not modelled.
 
+## Roadmap
+
+Not yet implemented, roughly in order of likely usefulness:
+
+- [ ] **Mirroring support** — represent one logical monitor driving several
+  outputs in the schema, instead of `export` warning and keeping only the
+  first output.
+- [ ] **Relative placement** (`--right-of`, `--above`, …) as an alternative to
+  absolute `x`/`y`, so layouts don't have to be re-derived by hand when a
+  reference screen's geometry changes.
+- [ ] **`MonitorsChanged` listener** — a long-running mode that re-runs
+  `GetCurrentState` on that signal and re-applies, for the case where hotplug
+  picks the wrong layout at the Mutter level.
+- [ ] **Multiple layouts per invocation** — try each file in a set and apply
+  the first whose screens are all present, instead of the caller having to
+  sequence `haichi apply` calls itself.
+- [ ] **`color-mode` / `rgb-range` / luminance** (`gdctl pref`) modelling.
+- [ ] **GDM greeter config** — optional support for
+  `/var/lib/gdm/.config/monitors.xml`, so the greeter's layout can be managed
+  the same way as the session's.
+- [ ] **Configuration generation** — a `haichi init` subcommand to create a skeleton TOML from the
+  current state, with comments and examples.
+- [ ] **Configuration validation** — a `haichi check` subcommand to validate a TOML file without applying it, catching geometry errors and missing fields. This is a superset of `--verify` since it can check for missing fields and other schema issues before even talking to Mutter.d
+- [ ] **Shell completion** — optional `bash`/`zsh`/`fish` completions for the `haichi` command.
+- [ ] **`haichi list`** — dump every connected monitor's connector, identity, and
+  supported mode/scale strings, including monitors that aren't currently in a
+  logical monitor. `export` only emits a `[screens.*]` block for active
+  monitors, so there's currently no way to discover what to write for a panel
+  you haven't turned on yet without reading raw D-Bus state.
+- [ ] **`haichi edit`** — an interactive, prompt-driven editor for a layout
+  file: pick a screen, then a field, then a value from a menu populated from
+  live D-Bus state (only the modes/scales the chosen monitor actually
+  supports), instead of hand-typing exact-match strings like
+  `2560x1440@240.002`. Builds on `list` (for the live data) and `check` (for
+  the same validation, reused instead of duplicated).
+
 ## Rebuilding `monitors.xml`
 
 It is a generated cache, not a file to author. Mutter parses it once at startup
