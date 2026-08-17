@@ -32,7 +32,13 @@ pub const TRANSFORMS: [&str; 8] = [
     "flipped-270",
 ];
 
-const SCREEN_KEYS: [&str; 10] = [
+/// Values accepted by `gdctl set --color-mode`, per gdctl(1).
+pub const COLOR_MODES: [&str; 3] = ["default", "sdr-native", "bt2100"];
+
+/// Values accepted by `gdctl set --rgb-range`, per gdctl(1).
+pub const RGB_RANGES: [&str; 3] = ["auto", "full", "limited"];
+
+const SCREEN_KEYS: [&str; 13] = [
     "vendor",
     "product",
     "serial",
@@ -43,6 +49,9 @@ const SCREEN_KEYS: [&str; 10] = [
     "scale",
     "transform",
     "primary",
+    "color-mode",
+    "rgb-range",
+    "luminance",
 ];
 
 #[derive(Debug, Clone)]
@@ -59,6 +68,14 @@ pub struct Screen {
     pub primary: bool,
     /// Optional pin, breaks identity ties.
     pub connector: Option<String>,
+    /// `gdctl set --color-mode`: one of [`COLOR_MODES`]. `bt2100` is HDR.
+    pub color_mode: Option<String>,
+    /// `gdctl set --rgb-range`: one of [`RGB_RANGES`].
+    pub rgb_range: Option<String>,
+    /// `gdctl pref --luminance`, applied to whichever color mode ends up
+    /// active after `apply`. A separate command from `set` — see
+    /// `commands::apply::gdctl::build_pref_commands`.
+    pub luminance: Option<f64>,
 }
 
 impl Screen {
@@ -208,6 +225,41 @@ fn parse_layout(raw: Value) -> Result<Layout, ConfigError> {
             }
         };
 
+        let color_mode = body.get("color-mode").map(scalar_string);
+        if let Some(color_mode) = &color_mode {
+            if !COLOR_MODES.contains(&color_mode.as_str()) {
+                problems.push(format!(
+                    "{where_}: color-mode {color_mode:?} is not one of {}",
+                    COLOR_MODES.join(", ")
+                ));
+            }
+        }
+
+        let rgb_range = body.get("rgb-range").map(scalar_string);
+        if let Some(rgb_range) = &rgb_range {
+            if !RGB_RANGES.contains(&rgb_range.as_str()) {
+                problems.push(format!(
+                    "{where_}: rgb-range {rgb_range:?} is not one of {}",
+                    RGB_RANGES.join(", ")
+                ));
+            }
+        }
+
+        let luminance = match body.get("luminance") {
+            None => None,
+            Some(value) => match number(Some(value), "luminance", &where_, 0.0) {
+                Ok(n) if n > 0.0 => Some(n),
+                Ok(_) => {
+                    problems.push(format!("{where_}: luminance must be greater than 0"));
+                    None
+                }
+                Err(problem) => {
+                    problems.push(problem);
+                    None
+                }
+            },
+        };
+
         screens.push(Screen {
             name: name.clone(),
             vendor: scalar_string(&body["vendor"]),
@@ -220,6 +272,9 @@ fn parse_layout(raw: Value) -> Result<Layout, ConfigError> {
             transform,
             primary,
             connector: body.get("connector").map(scalar_string),
+            color_mode,
+            rgb_range,
+            luminance,
         });
     }
 
@@ -475,6 +530,104 @@ mod tests {
             err.problems
                 .iter()
                 .any(|p| p.contains("no [screens.*] tables"))
+        );
+    }
+
+    #[test]
+    fn parses_color_mode_rgb_range_and_luminance() {
+        let layout = parse(
+            r#"
+            [screens.main]
+            vendor = "LHC"
+            product = "P2710S"
+            serial = "0"
+            mode = "1920x1080@60"
+            primary = true
+            color-mode = "bt2100"
+            rgb-range = "full"
+            luminance = 400
+            "#,
+        )
+        .expect("valid color settings should parse");
+
+        let screen = &layout.screens[0];
+        assert_eq!(screen.color_mode.as_deref(), Some("bt2100"));
+        assert_eq!(screen.rgb_range.as_deref(), Some("full"));
+        assert_eq!(screen.luminance, Some(400.0));
+    }
+
+    #[test]
+    fn color_mode_rgb_range_and_luminance_default_to_none() {
+        let layout = parse(
+            r#"
+            [screens.main]
+            vendor = "LHC"
+            product = "P2710S"
+            serial = "0"
+            mode = "1920x1080@60"
+            primary = true
+            "#,
+        )
+        .expect("valid layout should parse");
+
+        let screen = &layout.screens[0];
+        assert!(screen.color_mode.is_none());
+        assert!(screen.rgb_range.is_none());
+        assert!(screen.luminance.is_none());
+    }
+
+    #[test]
+    fn rejects_unknown_color_mode() {
+        let err = parse(
+            r#"
+            [screens.main]
+            vendor = "LHC"
+            product = "P2710S"
+            serial = "0"
+            mode = "1920x1080@60"
+            primary = true
+            color-mode = "vivid"
+            "#,
+        )
+        .unwrap_err();
+        assert!(err.problems.iter().any(|p| p.contains("color-mode")));
+    }
+
+    #[test]
+    fn rejects_unknown_rgb_range() {
+        let err = parse(
+            r#"
+            [screens.main]
+            vendor = "LHC"
+            product = "P2710S"
+            serial = "0"
+            mode = "1920x1080@60"
+            primary = true
+            rgb-range = "wide"
+            "#,
+        )
+        .unwrap_err();
+        assert!(err.problems.iter().any(|p| p.contains("rgb-range")));
+    }
+
+    #[test]
+    fn rejects_non_positive_luminance() {
+        let err = parse(
+            r#"
+            [screens.main]
+            vendor = "LHC"
+            product = "P2710S"
+            serial = "0"
+            mode = "1920x1080@60"
+            primary = true
+            luminance = 0
+            "#,
+        )
+        .unwrap_err();
+        assert!(
+            err.problems
+                .iter()
+                .any(|p| p.contains("luminance must be greater than 0"))
         );
     }
 }

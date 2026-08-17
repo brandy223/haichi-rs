@@ -73,6 +73,9 @@ scale = 1                      # default 1
 transform = "270"              # default "normal"
 primary = true                 # exactly one screen must set this
 connector = "DP-9"             # optional pin, see below
+color-mode = "bt2100"          # optional: "default" | "sdr-native" | "bt2100" (HDR)
+rgb-range = "full"             # optional: "auto" | "full" | "limited"
+luminance = 400                # optional, applied via `gdctl pref` after `set`
 ```
 
 Table names (`p2710s`) are labels for your own benefit; nothing matches on them.
@@ -84,6 +87,16 @@ Table names (`p2710s`) are labels for your own benefit; nothing matches on them.
 preferred is frequently *not* the fastest mode (this machine's P2710S prefers
 60 Hz and runs at 240 Hz), so a default would silently downgrade refresh rate.
 `export` fills it in from the live state.
+
+`color-mode`, `rgb-range` and `luminance` are all optional and independent;
+omitting them leaves that setting untouched. `color-mode = "bt2100"` is what
+turns HDR on for a screen. `color-mode` and `rgb-range` are applied as part of
+`gdctl set`, alongside the rest of the layout. `luminance` is not — per
+gdctl(1) it applies to "the current color mode", so `apply` sets it via a
+separate `gdctl pref --monitor <connector> --luminance <value>` call made
+*after* `set` succeeds, once that color mode is actually active. It is
+skipped under `--verify`, since `pref` has no verify-only mode of its own and
+always writes for real.
 
 ## Why identity, not connector
 
@@ -155,7 +168,10 @@ so it means "re-run `GetCurrentState`".
   and run them in sequence — each is a no-op unless its screens are present.
 - **The GDM greeter** keeps its own `/var/lib/gdm/.config/monitors.xml`
   (`chown gdm:gdm`, `restorecon` on SELinux). Out of scope.
-- `color-mode`, `rgb-range` and luminance (`gdctl pref`) are not modelled.
+- **`export` does not read back `color-mode`, `rgb-range` or `luminance`** —
+  `GetCurrentState` is not yet parsed for them, so a generated config never
+  includes them even if a screen is currently in HDR; add them by hand (or
+  re-add them after a re-`export`).
 
 ## Roadmap
 
@@ -173,7 +189,10 @@ Not yet implemented, roughly in order of likely usefulness:
 - [ ] **Multiple layouts per invocation** — try each file in a set and apply
   the first whose screens are all present, instead of the caller having to
   sequence `haichi apply` calls itself.
-- [ ] **`color-mode` / `rgb-range` / luminance** (`gdctl pref`) modelling.
+- [x] **`color-mode` / `rgb-range` / luminance** modelling — `color-mode`
+  (HDR is `bt2100`) and `rgb-range` are set via `gdctl set`; `luminance` via a
+  follow-up `gdctl pref` call. Reading these back into `export` is still open,
+  see Limitations.
 - [ ] **GDM greeter config** — optional support for
   `/var/lib/gdm/.config/monitors.xml`, so the greeter's layout can be managed
   the same way as the session's.

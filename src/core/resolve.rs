@@ -179,6 +179,9 @@ mod tests {
             transform: "normal".to_string(),
             primary: true,
             connector: connector.map(str::to_string),
+            color_mode: None,
+            rgb_range: None,
+            luminance: None,
         }
     }
 

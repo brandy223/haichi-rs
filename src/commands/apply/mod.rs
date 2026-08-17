@@ -12,7 +12,7 @@ use crate::core::state::read_state;
 
 mod gdctl;
 
-use gdctl::build_command;
+use gdctl::{build_command, build_pref_commands};
 
 #[derive(Args)]
 pub struct ApplyArgs {
@@ -73,11 +73,21 @@ pub fn run(args: ApplyArgs) -> Result<Status, AppError> {
     // verify never writes anything anyway.
     let persistent = !args.no_persistent && !args.verify;
     let cmd = build_command(&resolved, &layout, persistent, args.verify);
+    // `gdctl pref` has no --verify of its own and, unlike `set`, always
+    // writes for real — so skip it entirely under --verify, where nothing
+    // should be applied.
+    let pref_cmds = if args.verify {
+        Vec::new()
+    } else {
+        build_pref_commands(&resolved)
+    };
 
     if args.dry_run {
-        let joined = shlex::try_join(cmd.iter().map(String::as_str))
-            .expect("gdctl arguments are plain strings, never containing a NUL byte");
-        writeln!(std::io::stdout(), "{joined}")?;
+        for cmd in std::iter::once(&cmd).chain(&pref_cmds) {
+            let joined = shlex::try_join(cmd.iter().map(String::as_str))
+                .expect("gdctl arguments are plain strings, never containing a NUL byte");
+            writeln!(std::io::stdout(), "{joined}")?;
+        }
         return Ok(Status::Ok);
     }
 
@@ -94,5 +104,24 @@ pub fn run(args: ApplyArgs) -> Result<Status, AppError> {
     if args.verify {
         warn("verified only; nothing was applied");
     }
-    Ok(Status::Ok)
+
+    let mut pref_failed = false;
+    for cmd in &pref_cmds {
+        let status = Command::new(&cmd[0]).args(&cmd[1..]).status()?;
+        if !status.success() {
+            let joined = shlex::try_join(cmd.iter().map(String::as_str))
+                .expect("gdctl arguments are plain strings, never containing a NUL byte");
+            warn(&format!(
+                "gdctl exited {}: {joined}",
+                status.code().unwrap_or(-1)
+            ));
+            pref_failed = true;
+        }
+    }
+
+    Ok(if pref_failed {
+        Status::Failed
+    } else {
+        Status::Ok
+    })
 }
