@@ -1,7 +1,7 @@
 //! Turns a resolved layout into a `gdctl set` invocation.
 
-use crate::config::Layout;
-use crate::resolve::{Resolved, fmt_scale};
+use crate::core::config::Layout;
+use crate::core::resolve::{Resolved, fmt_scale};
 
 pub fn build_command(
     resolved: &[Resolved],
@@ -47,8 +47,8 @@ pub fn build_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Screen;
-    use crate::state::Monitor;
+    use crate::core::config::Screen;
+    use crate::core::state::Monitor;
 
     fn screen(name: &str, primary: bool) -> Screen {
         Screen {

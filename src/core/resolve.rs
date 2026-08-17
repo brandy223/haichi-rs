@@ -1,14 +1,14 @@
 //! Match declared screens to connected monitors and pick a concrete scale.
 
-use crate::config::Layout;
-use crate::error::ConfigError;
-use crate::state::{Monitor, State};
+use crate::core::config::Layout;
+use crate::core::error::ConfigError;
+use crate::core::state::{Monitor, State};
 
 const SCALE_EPSILON: f64 = 1e-6;
 
 #[derive(Debug)]
 pub struct Resolved<'a> {
-    pub screen: &'a crate::config::Screen,
+    pub screen: &'a crate::core::config::Screen,
     pub monitor: &'a Monitor,
     /// The declared scale, snapped to the exact value the mode supports.
     pub scale: f64,
@@ -126,8 +126,8 @@ pub fn fmt_scale(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::Screen;
-    use crate::state::Mode;
+    use crate::core::config::Screen;
+    use crate::core::state::Mode;
 
     fn mode(id: &str, scales: &[f64]) -> Mode {
         Mode {
