@@ -14,7 +14,7 @@ use clap::Parser;
 
 use cli::Cli;
 use commands::{Status, dispatch, warn};
-use core::error::AppError;
+use crate::core::error::AppError;
 
 const EXIT_OK: u8 = 0;
 const EXIT_FAILED: u8 = 1;
