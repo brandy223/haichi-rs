@@ -168,10 +168,11 @@ so it means "re-run `GetCurrentState`".
   and run them in sequence — each is a no-op unless its screens are present.
 - **The GDM greeter** keeps its own `/var/lib/gdm/.config/monitors.xml`
   (`chown gdm:gdm`, `restorecon` on SELinux). Out of scope.
-- **`export` does not read back `color-mode`, `rgb-range` or `luminance`** —
-  `GetCurrentState` is not yet parsed for them, so a generated config never
-  includes them even if a screen is currently in HDR; add them by hand (or
-  re-add them after a re-`export`).
+- **`export` does not read back `luminance`.** `GetCurrentState` has no
+  luminance property to read (confirmed against a live Mutter 49.7 session —
+  it is set-only, via `gdctl pref`); add it back by hand after a re-`export`.
+  `color-mode` and `rgb-range` *are* read back (only when off their default,
+  same as `primary`).
 
 ## Roadmap
 
@@ -190,9 +191,9 @@ Not yet implemented, roughly in order of likely usefulness:
   the first whose screens are all present, instead of the caller having to
   sequence `haichi apply` calls itself.
 - [x] **`color-mode` / `rgb-range` / luminance** modelling — `color-mode`
-  (HDR is `bt2100`) and `rgb-range` are set via `gdctl set`; `luminance` via a
-  follow-up `gdctl pref` call. Reading these back into `export` is still open,
-  see Limitations.
+  (HDR is `bt2100`) and `rgb-range` are set via `gdctl set` and read back by
+  `export`; `luminance` is set via a follow-up `gdctl pref` call but, per
+  Limitations, cannot be read back.
 - [ ] **GDM greeter config** — optional support for
   `/var/lib/gdm/.config/monitors.xml`, so the greeter's layout can be managed
   the same way as the session's.

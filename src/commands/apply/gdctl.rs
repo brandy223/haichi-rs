@@ -106,6 +106,8 @@ mod tests {
             serial: "0".to_string(),
             display_name: String::new(),
             modes: Vec::new(),
+            color_mode: "default".to_string(),
+            rgb_range: "auto".to_string(),
         }
     }
 

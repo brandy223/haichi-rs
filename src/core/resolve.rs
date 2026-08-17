@@ -156,6 +156,8 @@ mod tests {
             serial: serial.to_string(),
             display_name: String::new(),
             modes,
+            color_mode: "default".to_string(),
+            rgb_range: "auto".to_string(),
         }
     }
 

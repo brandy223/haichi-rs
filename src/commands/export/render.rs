@@ -158,6 +158,14 @@ pub fn export_toml(state: &State) -> (String, Vec<String>) {
         if logical.primary {
             lines.push("primary = true".to_string());
         }
+        // Only written when the monitor is off its default, so an export of
+        // an all-SDR setup stays free of color-mode/rgb-range noise.
+        if !monitor.color_mode.is_empty() && monitor.color_mode != "default" {
+            lines.push(format!("color-mode = {}", toml_string(&monitor.color_mode)));
+        }
+        if !monitor.rgb_range.is_empty() && monitor.rgb_range != "auto" {
+            lines.push(format!("rgb-range = {}", toml_string(&monitor.rgb_range)));
+        }
         lines.push(String::new());
     }
 
@@ -205,6 +213,8 @@ mod tests {
             serial: "0".to_string(),
             display_name: String::new(),
             modes: vec![mode("1920x1080@60")],
+            color_mode: "default".to_string(),
+            rgb_range: "auto".to_string(),
         }
     }
 
@@ -324,5 +334,60 @@ mod tests {
         let (document, _) = export_toml(&state);
         assert!(document.contains("[screens.p2710s]"));
         assert!(document.contains("[screens.p2710s-2]"));
+    }
+
+    #[test]
+    fn exports_a_non_default_color_mode_and_rgb_range() {
+        let mut hdr_monitor = monitor("DP-1", "P2710S");
+        hdr_monitor.color_mode = "bt2100".to_string();
+        hdr_monitor.rgb_range = "full".to_string();
+        let state = State {
+            monitors: vec![hdr_monitor],
+            logical_monitors: vec![LogicalMonitor {
+                x: 0,
+                y: 0,
+                scale: 1.0,
+                transform: 0,
+                primary: true,
+                specs: vec![(
+                    "DP-1".to_string(),
+                    "LHC".to_string(),
+                    "P2710S".to_string(),
+                    "0".to_string(),
+                )],
+            }],
+            layout_mode: None,
+            supports_changing_layout_mode: false,
+        };
+
+        let (document, _) = export_toml(&state);
+        assert!(document.contains("color-mode = \"bt2100\""));
+        assert!(document.contains("rgb-range = \"full\""));
+    }
+
+    #[test]
+    fn omits_color_mode_and_rgb_range_when_default() {
+        let state = State {
+            monitors: vec![monitor("DP-1", "P2710S")],
+            logical_monitors: vec![LogicalMonitor {
+                x: 0,
+                y: 0,
+                scale: 1.0,
+                transform: 0,
+                primary: true,
+                specs: vec![(
+                    "DP-1".to_string(),
+                    "LHC".to_string(),
+                    "P2710S".to_string(),
+                    "0".to_string(),
+                )],
+            }],
+            layout_mode: None,
+            supports_changing_layout_mode: false,
+        };
+
+        let (document, _) = export_toml(&state);
+        assert!(!document.contains("color-mode"));
+        assert!(!document.contains("rgb-range"));
     }
 }

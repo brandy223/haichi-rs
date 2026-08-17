@@ -38,6 +38,12 @@ pub struct Monitor {
     pub serial: String,
     pub display_name: String,
     pub modes: Vec<Mode>,
+    /// `default` or `bt2100` (HDR); empty if Mutter reports an unrecognized
+    /// code, see [`COLOR_MODE_VALUES`].
+    pub color_mode: String,
+    /// `auto`, `full` or `limited`; same fallback as `color_mode`, see
+    /// [`RGB_RANGE_VALUES`].
+    pub rgb_range: String,
 }
 
 impl Monitor {
@@ -153,6 +159,23 @@ fn prop_str(props: &BTreeMap<String, OwnedValue>, key: &str) -> String {
         .to_string()
 }
 
+/// `color-mode` and `rgb-range` are `uint32` enums on the wire, not strings —
+/// `gdctl show` only *displays* them as text. These mappings were read back
+/// off a live Mutter 49.7 session (`gdctl set --color-mode/--rgb-range` then
+/// `GetCurrentState` over `gdbus`), matching the string values `gdctl set`
+/// itself accepts. An unrecognized code (e.g. a color mode added by a newer
+/// Mutter) maps to `""`, the same as the property being absent.
+const COLOR_MODE_VALUES: [(u32, &str); 2] = [(0, "default"), (1, "bt2100")];
+const RGB_RANGE_VALUES: [(u32, &str); 3] = [(1, "auto"), (2, "full"), (3, "limited")];
+
+fn prop_enum(props: &BTreeMap<String, OwnedValue>, key: &str, values: &[(u32, &str)]) -> String {
+    props
+        .get(key)
+        .and_then(|v| u32::try_from(v).ok())
+        .and_then(|code| values.iter().find(|(c, _)| *c == code))
+        .map_or(String::new(), |(_, name)| name.to_string())
+}
+
 pub fn read_state() -> Result<State, AppError> {
     let connection = Connection::session()?;
     let proxy = Proxy::new(
@@ -168,6 +191,8 @@ pub fn read_state() -> Result<State, AppError> {
         .into_iter()
         .map(|entry| Monitor {
             display_name: prop_str(&entry.properties, "display-name"),
+            color_mode: prop_enum(&entry.properties, "color-mode", &COLOR_MODE_VALUES),
+            rgb_range: prop_enum(&entry.properties, "rgb-range", &RGB_RANGE_VALUES),
             connector: entry.spec.connector,
             vendor: entry.spec.vendor,
             product: entry.spec.product,
@@ -217,4 +242,69 @@ pub fn read_state() -> Result<State, AppError> {
         layout_mode,
         supports_changing_layout_mode: prop_bool(&props, "supports-changing-layout-mode"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zbus::zvariant::Value;
+
+    fn props_with(key: &str, code: u32) -> BTreeMap<String, OwnedValue> {
+        let mut props = BTreeMap::new();
+        props.insert(
+            key.to_string(),
+            OwnedValue::try_from(Value::U32(code)).expect("u32 always converts to OwnedValue"),
+        );
+        props
+    }
+
+    #[test]
+    fn decodes_known_color_mode_and_rgb_range_codes() {
+        // Codes confirmed against a live Mutter 49.7 session, see the
+        // COLOR_MODE_VALUES / RGB_RANGE_VALUES doc comment.
+        assert_eq!(
+            prop_enum(
+                &props_with("color-mode", 0),
+                "color-mode",
+                &COLOR_MODE_VALUES
+            ),
+            "default"
+        );
+        assert_eq!(
+            prop_enum(
+                &props_with("color-mode", 1),
+                "color-mode",
+                &COLOR_MODE_VALUES
+            ),
+            "bt2100"
+        );
+        assert_eq!(
+            prop_enum(&props_with("rgb-range", 1), "rgb-range", &RGB_RANGE_VALUES),
+            "auto"
+        );
+        assert_eq!(
+            prop_enum(&props_with("rgb-range", 2), "rgb-range", &RGB_RANGE_VALUES),
+            "full"
+        );
+        assert_eq!(
+            prop_enum(&props_with("rgb-range", 3), "rgb-range", &RGB_RANGE_VALUES),
+            "limited"
+        );
+    }
+
+    #[test]
+    fn unrecognized_code_or_missing_property_decodes_to_empty() {
+        assert_eq!(
+            prop_enum(
+                &props_with("color-mode", 99),
+                "color-mode",
+                &COLOR_MODE_VALUES
+            ),
+            ""
+        );
+        assert_eq!(
+            prop_enum(&BTreeMap::new(), "color-mode", &COLOR_MODE_VALUES),
+            ""
+        );
+    }
 }
