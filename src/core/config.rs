@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use toml::Value;
 
-use crate::error::ConfigError;
+use crate::core::error::ConfigError;
 
 /// `$XDG_CONFIG_HOME/haichi/config.toml`, falling back to
 /// `~/.config/haichi/config.toml` when `XDG_CONFIG_HOME` is unset or empty —

@@ -1,7 +1,7 @@
 //! Renders the live layout as an annotated TOML document.
 
-use crate::resolve::fmt_scale;
-use crate::state::State;
+use crate::core::resolve::fmt_scale;
+use crate::core::state::State;
 
 fn transform_name(code: u32) -> &'static str {
     match code {
@@ -167,7 +167,7 @@ pub fn export_toml(state: &State) -> (String, Vec<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::{LogicalMonitor, Mode, Monitor};
+    use crate::core::state::{LogicalMonitor, Mode, Monitor};
 
     #[test]
     fn slug_collapses_non_alphanumeric_runs_and_trims_edges() {

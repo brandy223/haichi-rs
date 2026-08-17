@@ -9,7 +9,7 @@ use serde::Deserialize;
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{OwnedValue, Type};
 
-use crate::error::AppError;
+use crate::core::error::AppError;
 
 const LAYOUT_MODE_LOGICAL: u32 = 1;
 const LAYOUT_MODE_PHYSICAL: u32 = 2;

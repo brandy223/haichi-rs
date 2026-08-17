@@ -2,56 +2,36 @@ use std::io::Write as _;
 use std::path::PathBuf;
 use std::process::Command;
 
-use crate::config::{default_path, load_layout};
-use crate::error::{AppError, ConfigError};
-use crate::export::export_toml;
-use crate::gdctl::build_command;
-use crate::resolve::resolve;
-use crate::state::read_state;
+use clap::Args;
 
-/// Outcome of a command that isn't itself an error: `Ok` maps to exit code 0,
-/// `Failed` to exit code 1. `AppError::Config` carries exit code 2 on its own.
-pub enum Status {
-    Ok,
-    Failed,
-}
+use crate::commands::{Status, warn};
+use crate::core::config::{default_path, load_layout};
+use crate::core::error::{AppError, ConfigError};
+use crate::core::resolve::resolve;
+use crate::core::state::read_state;
 
-pub fn warn(message: &str) {
-    eprintln!("haichi: {message}");
-}
+mod gdctl;
 
-pub fn cmd_export(output: &str, force: bool) -> Result<Status, AppError> {
-    let state = read_state()?;
-    let (document, notes) = export_toml(&state);
-    for note in &notes {
-        warn(note);
-    }
+use gdctl::build_command;
 
-    if output == "-" {
-        std::io::stdout().write_all(document.as_bytes())?;
-        return Ok(Status::Ok);
-    }
-
-    let path = PathBuf::from(output);
-    if path.exists() && !force {
-        warn(&format!(
-            "{} exists; pass --force to overwrite",
-            path.display()
-        ));
-        return Ok(Status::Failed);
-    }
-    std::fs::write(&path, &document)?;
-    warn(&format!("wrote {}", path.display()));
-    Ok(Status::Ok)
-}
-
-pub fn cmd_apply(
+#[derive(Args)]
+pub struct ApplyArgs {
+    /// Path to the layout TOML (default: $XDG_CONFIG_HOME/haichi/config.toml,
+    /// or ~/.config/haichi/config.toml if XDG_CONFIG_HOME is unset)
     config: Option<PathBuf>,
+    /// Print the gdctl command instead of running it
+    #[arg(short = 'n', long)]
     dry_run: bool,
+    /// Ask gdctl to validate the layout without applying
+    #[arg(short = 'V', long)]
     verify: bool,
+    /// Do not write the layout to monitors.xml (it will be lost on hotplug, wake or login)
+    #[arg(long)]
     no_persistent: bool,
-) -> Result<Status, AppError> {
-    let config = config.unwrap_or_else(default_path);
+}
+
+pub fn run(args: ApplyArgs) -> Result<Status, AppError> {
+    let config = args.config.unwrap_or_else(default_path);
     let layout = load_layout(&config)?;
     let state = read_state()?;
 
@@ -91,10 +71,10 @@ pub fn cmd_apply(
 
     // Mutter rejects a config that is both persistent and verify-only, and a
     // verify never writes anything anyway.
-    let persistent = !no_persistent && !verify;
-    let cmd = build_command(&resolved, &layout, persistent, verify);
+    let persistent = !args.no_persistent && !args.verify;
+    let cmd = build_command(&resolved, &layout, persistent, args.verify);
 
-    if dry_run {
+    if args.dry_run {
         let joined = shlex::try_join(cmd.iter().map(String::as_str))
             .expect("gdctl arguments are plain strings, never containing a NUL byte");
         writeln!(std::io::stdout(), "{joined}")?;
@@ -111,7 +91,7 @@ pub fn cmd_apply(
         ));
         return Ok(Status::Failed);
     }
-    if verify {
+    if args.verify {
         warn("verified only; nothing was applied");
     }
     Ok(Status::Ok)

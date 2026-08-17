@@ -6,20 +6,15 @@
 
 mod cli;
 mod commands;
-mod config;
-mod error;
-mod export;
-mod gdctl;
-mod resolve;
-mod state;
+mod core;
 
 use std::process::ExitCode;
 
 use clap::Parser;
 
-use cli::{Cli, Command};
-use commands::{Status, cmd_apply, cmd_export, warn};
-use error::AppError;
+use cli::Cli;
+use commands::{Status, dispatch, warn};
+use core::error::AppError;
 
 const EXIT_OK: u8 = 0;
 const EXIT_FAILED: u8 = 1;
@@ -28,15 +23,7 @@ const EXIT_CONFIG: u8 = 2;
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
-    let result = match cli.command {
-        Command::Export { output, force } => cmd_export(&output, force),
-        Command::Apply {
-            config,
-            dry_run,
-            verify,
-            no_persistent,
-        } => cmd_apply(config, dry_run, verify, no_persistent),
-    };
+    let result = dispatch(cli.command);
 
     match result {
         Ok(Status::Ok) => ExitCode::from(EXIT_OK),
