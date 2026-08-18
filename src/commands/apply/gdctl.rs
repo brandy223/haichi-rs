@@ -1,4 +1,4 @@
-//! Turns a resolved layout into a `gdctl set` invocation.
+//! Turns a resolved layout into `gdctl` invocations.
 
 use crate::core::config::Layout;
 use crate::core::resolve::{Resolved, fmt_scale};
@@ -31,7 +31,7 @@ pub fn build_command(
         cmd.push("--scale".to_string());
         cmd.push(fmt_scale(item.scale));
         cmd.push("--transform".to_string());
-        cmd.push(screen.transform.clone());
+        cmd.push(screen.transform.to_string());
         if screen.primary {
             cmd.push("--primary".to_string());
         }
@@ -39,16 +39,56 @@ pub fn build_command(
         cmd.push(item.monitor.connector.clone());
         cmd.push("--mode".to_string());
         cmd.push(screen.mode.clone());
+        if let Some(color_mode) = screen.color_mode {
+            cmd.push("--color-mode".to_string());
+            cmd.push(color_mode.to_string());
+        }
+        if let Some(rgb_range) = screen.rgb_range {
+            cmd.push("--rgb-range".to_string());
+            cmd.push(rgb_range.to_string());
+        }
     }
 
     cmd
 }
 
+/// Formats a luminance value for `gdctl pref --luminance`.
+/// If the value is an integer, it is formatted without a decimal point.
+/// Otherwise, it is formatted with a decimal point.
+fn fmt_luminance(value: f64) -> String {
+    if value.fract() == 0.0 {
+        format!("{value:.0}")
+    } else {
+        format!("{value}")
+    }
+}
+
+/// Builds one `gdctl pref` invocation per resolved screen that declares a
+/// luminance. `pref` is a separate command from `set` — per gdctl(1),
+/// `--luminance` applies to "the current color mode", so these must run
+/// *after* the `set` command that establishes it.
+pub fn build_pref_commands(resolved: &[Resolved]) -> Vec<Vec<String>> {
+    resolved
+        .iter()
+        .filter_map(|item| {
+            let luminance = item.screen.luminance?;
+            Some(vec![
+                "gdctl".to_string(),
+                "pref".to_string(),
+                "--monitor".to_string(),
+                item.monitor.connector.clone(),
+                "--luminance".to_string(),
+                fmt_luminance(luminance),
+            ])
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::Screen;
-    use crate::core::state::Monitor;
+    use crate::core::config::{ColorMode, RgbRange, Screen, Transform};
+    use crate::core::state::{Monitor, PropValue};
 
     fn screen(name: &str, primary: bool) -> Screen {
         Screen {
@@ -60,9 +100,12 @@ mod tests {
             x: 0,
             y: 0,
             scale: 1.25,
-            transform: "270".to_string(),
+            transform: Transform::_270,
             primary,
             connector: None,
+            color_mode: None,
+            rgb_range: None,
+            luminance: None,
         }
     }
 
@@ -74,6 +117,8 @@ mod tests {
             serial: "0".to_string(),
             display_name: String::new(),
             modes: Vec::new(),
+            color_mode: PropValue::Known(ColorMode::Default),
+            rgb_range: PropValue::Known(RgbRange::Auto),
         }
     }
 
@@ -139,5 +184,93 @@ mod tests {
         assert!(cmd.contains(&"--verify".to_string()));
         assert!(!cmd.contains(&"--primary".to_string()));
         assert!(!cmd.contains(&"--layout-mode".to_string()));
+    }
+
+    #[test]
+    fn color_mode_and_rgb_range_are_appended_after_mode_when_declared() {
+        let mut screen = screen("main", true);
+        screen.color_mode = Some(ColorMode::Bt2100);
+        screen.rgb_range = Some(RgbRange::Full);
+        let monitor = monitor("DP-9");
+        let resolved = [Resolved {
+            screen: &screen,
+            monitor: &monitor,
+            scale: 1.25,
+        }];
+        let layout = Layout {
+            screens: vec![],
+            layout_mode: None,
+        };
+
+        let cmd = build_command(&resolved, &layout, true, false);
+
+        let mode_pos = cmd.iter().position(|a| a == "--mode").unwrap();
+        assert_eq!(cmd[mode_pos + 2], "--color-mode");
+        assert_eq!(cmd[mode_pos + 3], "bt2100");
+        assert_eq!(cmd[mode_pos + 4], "--rgb-range");
+        assert_eq!(cmd[mode_pos + 5], "full");
+    }
+
+    #[test]
+    fn color_mode_and_rgb_range_are_omitted_when_not_declared() {
+        let screen = screen("main", true);
+        let monitor = monitor("DP-9");
+        let resolved = [Resolved {
+            screen: &screen,
+            monitor: &monitor,
+            scale: 1.25,
+        }];
+        let layout = Layout {
+            screens: vec![],
+            layout_mode: None,
+        };
+
+        let cmd = build_command(&resolved, &layout, true, false);
+
+        assert!(!cmd.contains(&"--color-mode".to_string()));
+        assert!(!cmd.contains(&"--rgb-range".to_string()));
+    }
+
+    #[test]
+    fn build_pref_commands_emits_one_luminance_command_per_declared_screen() {
+        let mut with_luminance = screen("bright", true);
+        with_luminance.luminance = Some(400.0);
+        let without_luminance = screen("dim", false);
+        let bright_monitor = monitor("DP-9");
+        let dim_monitor = monitor("DP-10");
+        let resolved = [
+            Resolved {
+                screen: &with_luminance,
+                monitor: &bright_monitor,
+                scale: 1.0,
+            },
+            Resolved {
+                screen: &without_luminance,
+                monitor: &dim_monitor,
+                scale: 1.0,
+            },
+        ];
+
+        let cmds = build_pref_commands(&resolved);
+
+        assert_eq!(
+            cmds,
+            vec![vec![
+                "gdctl".to_string(),
+                "pref".to_string(),
+                "--monitor".to_string(),
+                "DP-9".to_string(),
+                "--luminance".to_string(),
+                "400".to_string(),
+            ]]
+        );
+    }
+
+    #[test]
+    fn fmt_luminance_does_not_silently_saturate_non_finite_values() {
+        assert_eq!(fmt_luminance(f64::INFINITY), "inf");
+        assert_eq!(fmt_luminance(f64::NAN), "NaN");
+        assert_eq!(fmt_luminance(400.0), "400");
+        assert_eq!(fmt_luminance(400.5), "400.5");
     }
 }

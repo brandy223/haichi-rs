@@ -1,20 +1,21 @@
 //! Renders the live layout as an annotated TOML document.
 
+use crate::core::config::{ColorMode, RgbRange, Transform};
 use crate::core::resolve::fmt_scale;
-use crate::core::state::State;
+use crate::core::state::{PropValue, State};
 
-fn transform_name(code: u32) -> &'static str {
-    match code {
-        0 => "normal",
-        1 => "90",
-        2 => "180",
-        3 => "270",
-        4 => "flipped",
-        5 => "flipped-90",
-        6 => "flipped-180",
-        7 => "flipped-270",
-        _ => "normal",
-    }
+/// `logical_monitors[].transform` is a `uint32` matching Wayland's
+/// `wl_output.transform` / Mutter's `MetaMonitorTransform` enum, whose order
+/// is exactly `Transform::ALL`'s declaration order — a stable, foundational
+/// protocol enum (unlike `color-mode`/`rgb-range`'s sparse, version-varying
+/// wire codes, which need their own lookup table in `core::state`), so
+/// indexing into `Transform::ALL` is the whole mapping. Falls back to
+/// `Normal` for any (in practice unreachable) out-of-range code.
+fn transform_from_wire(code: u32) -> Transform {
+    Transform::ALL
+        .get(code as usize)
+        .copied()
+        .unwrap_or(Transform::Normal)
 }
 
 /// Ports names to TOML table-key slugs: runs of non-alphanumeric ASCII
@@ -38,6 +39,35 @@ fn slug(text: &str, fallback: &str) -> String {
         fallback.to_lowercase()
     } else {
         out
+    }
+}
+
+/// Pushes `key = value` to the TOML document when `value` is a known,
+/// off-default value — `Absent` or `Known(default)` mean there's nothing
+/// worth writing (exactly what `gdctl` already assumes when the key is
+/// omitted). `Unrecognized` means the property genuinely holds something,
+/// so it's reported as a note instead of dropped: the monitor really is
+/// in some non-default state, we just can't name it, so the exported
+/// config would otherwise silently under-describe it.
+fn push_if_non_default<T: PartialEq + std::fmt::Display>(
+    lines: &mut Vec<String>,
+    notes: &mut Vec<String>,
+    key: &str,
+    value: PropValue<T>,
+    default: T,
+    monitor: &str,
+) {
+    match value {
+        PropValue::Known(value) if value != default => {
+            lines.push(format!("{key} = {}", toml_string(&value.to_string())));
+        }
+        PropValue::Known(_) | PropValue::Absent => {}
+        PropValue::Unrecognized(code) => {
+            notes.push(format!(
+                "{monitor} reports {key} as code {code}, which this version of haichi doesn't \
+                 recognize; it was left out of the exported layout"
+            ));
+        }
     }
 }
 
@@ -153,11 +183,29 @@ pub fn export_toml(state: &State) -> (String, Vec<String>) {
         lines.push(format!("scale = {}", fmt_scale(logical.scale)));
         lines.push(format!(
             "transform = {}",
-            toml_string(transform_name(logical.transform))
+            toml_string(&transform_from_wire(logical.transform).to_string())
         ));
         if logical.primary {
             lines.push("primary = true".to_string());
         }
+        // Only written when the monitor is off its default, so an export of
+        // an all-SDR setup stays free of color-mode/rgb-range noise.
+        push_if_non_default(
+            &mut lines,
+            &mut notes,
+            "color-mode",
+            monitor.color_mode,
+            ColorMode::Default,
+            &monitor.describe(),
+        );
+        push_if_non_default(
+            &mut lines,
+            &mut notes,
+            "rgb-range",
+            monitor.rgb_range,
+            RgbRange::Auto,
+            &monitor.describe(),
+        );
         lines.push(String::new());
     }
 
@@ -184,6 +232,19 @@ mod tests {
         assert_eq!(toml_string("line\nbreak"), "\"line\\nbreak\"");
     }
 
+    #[test]
+    fn transform_from_wire_matches_wayland_output_transform_order() {
+        assert_eq!(transform_from_wire(0), Transform::Normal);
+        assert_eq!(transform_from_wire(1), Transform::_90);
+        assert_eq!(transform_from_wire(2), Transform::_180);
+        assert_eq!(transform_from_wire(3), Transform::_270);
+        assert_eq!(transform_from_wire(4), Transform::Flipped);
+        assert_eq!(transform_from_wire(5), Transform::Flipped90);
+        assert_eq!(transform_from_wire(6), Transform::Flipped180);
+        assert_eq!(transform_from_wire(7), Transform::Flipped270);
+        assert_eq!(transform_from_wire(99), Transform::Normal);
+    }
+
     fn mode(id: &str) -> Mode {
         Mode {
             id: id.to_string(),
@@ -205,6 +266,8 @@ mod tests {
             serial: "0".to_string(),
             display_name: String::new(),
             modes: vec![mode("1920x1080@60")],
+            color_mode: PropValue::Known(ColorMode::Default),
+            rgb_range: PropValue::Known(RgbRange::Auto),
         }
     }
 
@@ -324,5 +387,133 @@ mod tests {
         let (document, _) = export_toml(&state);
         assert!(document.contains("[screens.p2710s]"));
         assert!(document.contains("[screens.p2710s-2]"));
+    }
+
+    #[test]
+    fn exports_a_non_default_color_mode_and_rgb_range() {
+        let mut hdr_monitor = monitor("DP-1", "P2710S");
+        hdr_monitor.color_mode = PropValue::Known(ColorMode::Bt2100);
+        hdr_monitor.rgb_range = PropValue::Known(RgbRange::Full);
+        let state = State {
+            monitors: vec![hdr_monitor],
+            logical_monitors: vec![LogicalMonitor {
+                x: 0,
+                y: 0,
+                scale: 1.0,
+                transform: 0,
+                primary: true,
+                specs: vec![(
+                    "DP-1".to_string(),
+                    "LHC".to_string(),
+                    "P2710S".to_string(),
+                    "0".to_string(),
+                )],
+            }],
+            layout_mode: None,
+            supports_changing_layout_mode: false,
+        };
+
+        let (document, _) = export_toml(&state);
+        assert!(document.contains("color-mode = \"bt2100\""));
+        assert!(document.contains("rgb-range = \"full\""));
+    }
+
+    #[test]
+    fn omits_color_mode_and_rgb_range_when_default() {
+        let state = State {
+            monitors: vec![monitor("DP-1", "P2710S")],
+            logical_monitors: vec![LogicalMonitor {
+                x: 0,
+                y: 0,
+                scale: 1.0,
+                transform: 0,
+                primary: true,
+                specs: vec![(
+                    "DP-1".to_string(),
+                    "LHC".to_string(),
+                    "P2710S".to_string(),
+                    "0".to_string(),
+                )],
+            }],
+            layout_mode: None,
+            supports_changing_layout_mode: false,
+        };
+
+        let (document, _) = export_toml(&state);
+        assert!(!document.contains("color-mode"));
+        assert!(!document.contains("rgb-range"));
+    }
+
+    #[test]
+    fn omits_color_mode_and_rgb_range_when_absent() {
+        let mut absent = monitor("DP-1", "P2710S");
+        absent.color_mode = PropValue::Absent;
+        absent.rgb_range = PropValue::Absent;
+        let state = State {
+            monitors: vec![absent],
+            logical_monitors: vec![LogicalMonitor {
+                x: 0,
+                y: 0,
+                scale: 1.0,
+                transform: 0,
+                primary: true,
+                specs: vec![(
+                    "DP-1".to_string(),
+                    "LHC".to_string(),
+                    "P2710S".to_string(),
+                    "0".to_string(),
+                )],
+            }],
+            layout_mode: None,
+            supports_changing_layout_mode: false,
+        };
+
+        let (document, notes) = export_toml(&state);
+        assert!(!document.contains("color-mode"));
+        assert!(!document.contains("rgb-range"));
+        assert!(notes.is_empty());
+    }
+
+    // code-review follow-up (Copilot, PR #8): an unrecognized wire code is a
+    // real, non-default value we can't name — omitted from the TOML same as
+    // before, but now with a note explaining the omission instead of no
+    // signal at all that something was lost.
+    #[test]
+    fn notes_an_unrecognized_color_mode_or_rgb_range_instead_of_silently_dropping_it() {
+        let mut unrecognized = monitor("DP-1", "P2710S");
+        unrecognized.color_mode = PropValue::Unrecognized(99);
+        unrecognized.rgb_range = PropValue::Unrecognized(7);
+        let state = State {
+            monitors: vec![unrecognized],
+            logical_monitors: vec![LogicalMonitor {
+                x: 0,
+                y: 0,
+                scale: 1.0,
+                transform: 0,
+                primary: true,
+                specs: vec![(
+                    "DP-1".to_string(),
+                    "LHC".to_string(),
+                    "P2710S".to_string(),
+                    "0".to_string(),
+                )],
+            }],
+            layout_mode: None,
+            supports_changing_layout_mode: false,
+        };
+
+        let (document, notes) = export_toml(&state);
+        assert!(!document.contains("color-mode"));
+        assert!(!document.contains("rgb-range"));
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("color-mode") && n.contains("99"))
+        );
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.contains("rgb-range") && n.contains('7'))
+        );
     }
 }

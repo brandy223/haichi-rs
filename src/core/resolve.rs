@@ -109,7 +109,7 @@ pub fn resolve<'a>(
     }
 
     if !problems.is_empty() {
-        return Err(ConfigError::new(problems));
+        return Err(ConfigError::InvalidFieldValues(problems));
     }
 
     Ok((resolved, absent))
@@ -126,8 +126,8 @@ pub fn fmt_scale(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::Screen;
-    use crate::core::state::Mode;
+    use crate::core::config::{ColorMode, RgbRange, Screen, Transform};
+    use crate::core::state::{Mode, PropValue};
 
     fn mode(id: &str, scales: &[f64]) -> Mode {
         Mode {
@@ -156,6 +156,8 @@ mod tests {
             serial: serial.to_string(),
             display_name: String::new(),
             modes,
+            color_mode: PropValue::Known(ColorMode::Default),
+            rgb_range: PropValue::Known(RgbRange::Auto),
         }
     }
 
@@ -176,9 +178,12 @@ mod tests {
             x: 0,
             y: 0,
             scale: 1.0,
-            transform: "normal".to_string(),
+            transform: Transform::Normal,
             primary: true,
             connector: connector.map(str::to_string),
+            color_mode: None,
+            rgb_range: None,
+            luminance: None,
         }
     }
 
@@ -250,11 +255,10 @@ mod tests {
         ]);
 
         let err = resolve(&layout, &state).unwrap_err();
-        assert!(
-            err.problems
-                .iter()
-                .any(|p| p.contains("add a 'connector' key"))
-        );
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("add a 'connector' key")));
     }
 
     #[test]
@@ -307,11 +311,10 @@ mod tests {
         )]);
 
         let err = resolve(&layout, &state).unwrap_err();
-        assert!(
-            err.problems
-                .iter()
-                .any(|p| p.contains("is not supported by"))
-        );
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("is not supported by")));
     }
 
     #[test]
@@ -362,7 +365,10 @@ mod tests {
         });
 
         let err = resolve(&layout, &state).unwrap_err();
-        assert!(err.problems.iter().any(|p| p.contains("both resolve to")));
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("both resolve to")));
     }
 
     #[test]

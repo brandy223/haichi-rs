@@ -9,6 +9,7 @@ use serde::Deserialize;
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{OwnedValue, Type};
 
+use crate::core::config::{ColorMode, RgbRange};
 use crate::core::error::AppError;
 
 const LAYOUT_MODE_LOGICAL: u32 = 1;
@@ -38,6 +39,10 @@ pub struct Monitor {
     pub serial: String,
     pub display_name: String,
     pub modes: Vec<Mode>,
+    /// See [`COLOR_MODE_VALUES`].
+    pub color_mode: PropValue<ColorMode>,
+    /// See [`RGB_RANGE_VALUES`].
+    pub rgb_range: PropValue<RgbRange>,
 }
 
 impl Monitor {
@@ -153,6 +158,49 @@ fn prop_str(props: &BTreeMap<String, OwnedValue>, key: &str) -> String {
         .to_string()
 }
 
+/// The outcome of decoding an enum-valued D-Bus property such as
+/// `color-mode`/`rgb-range`. Kept distinct from a plain `Option<T>`
+/// because "the property is absent" and "the property is present with
+/// a code we don't have an entry for" used to collapse into the same
+/// case, which meant `export` could silently drop a monitor's real,
+/// non-default state (e.g. a `color-mode` a newer Mutter added) with
+/// no indication anything was lost. `Unrecognized` lets callers tell
+/// the two apart and warn only when there was actually something to
+/// report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PropValue<T> {
+    Known(T),
+    /// Present on the wire, but no entry in our lookup table for this code.
+    Unrecognized(u32),
+    Absent,
+}
+
+/// `color-mode` and `rgb-range` are `uint32` enums on the wire, not strings —
+/// `gdctl show` only *displays* them as text. These mappings were read back
+/// off a live Mutter 49.7 session (`gdctl set --color-mode/--rgb-range` then
+/// `GetCurrentState` over `gdbus`), matching the string values `gdctl set`
+/// itself accepts.
+const COLOR_MODE_VALUES: [(u32, ColorMode); 2] = [(0, ColorMode::Default), (1, ColorMode::Bt2100)];
+const RGB_RANGE_VALUES: [(u32, RgbRange); 3] = [
+    (1, RgbRange::Auto),
+    (2, RgbRange::Full),
+    (3, RgbRange::Limited),
+];
+
+fn prop_enum<T: Copy>(
+    props: &BTreeMap<String, OwnedValue>,
+    key: &str,
+    values: &[(u32, T)],
+) -> PropValue<T> {
+    let Some(code) = props.get(key).and_then(|v| u32::try_from(v).ok()) else {
+        return PropValue::Absent;
+    };
+    match values.iter().find(|(c, _)| *c == code) {
+        Some((_, value)) => PropValue::Known(*value),
+        None => PropValue::Unrecognized(code),
+    }
+}
+
 pub fn read_state() -> Result<State, AppError> {
     let connection = Connection::session()?;
     let proxy = Proxy::new(
@@ -168,6 +216,8 @@ pub fn read_state() -> Result<State, AppError> {
         .into_iter()
         .map(|entry| Monitor {
             display_name: prop_str(&entry.properties, "display-name"),
+            color_mode: prop_enum(&entry.properties, "color-mode", &COLOR_MODE_VALUES),
+            rgb_range: prop_enum(&entry.properties, "rgb-range", &RGB_RANGE_VALUES),
             connector: entry.spec.connector,
             vendor: entry.spec.vendor,
             product: entry.spec.product,
@@ -217,4 +267,73 @@ pub fn read_state() -> Result<State, AppError> {
         layout_mode,
         supports_changing_layout_mode: prop_bool(&props, "supports-changing-layout-mode"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zbus::zvariant::Value;
+
+    fn props_with(key: &str, code: u32) -> BTreeMap<String, OwnedValue> {
+        let mut props = BTreeMap::new();
+        props.insert(
+            key.to_string(),
+            OwnedValue::try_from(Value::U32(code)).expect("u32 always converts to OwnedValue"),
+        );
+        props
+    }
+
+    #[test]
+    fn decodes_known_color_mode_and_rgb_range_codes() {
+        // Codes confirmed against a live Mutter 49.7 session, see the
+        // COLOR_MODE_VALUES / RGB_RANGE_VALUES doc comment.
+        assert_eq!(
+            prop_enum(
+                &props_with("color-mode", 0),
+                "color-mode",
+                &COLOR_MODE_VALUES
+            ),
+            PropValue::Known(ColorMode::Default)
+        );
+        assert_eq!(
+            prop_enum(
+                &props_with("color-mode", 1),
+                "color-mode",
+                &COLOR_MODE_VALUES
+            ),
+            PropValue::Known(ColorMode::Bt2100)
+        );
+        assert_eq!(
+            prop_enum(&props_with("rgb-range", 1), "rgb-range", &RGB_RANGE_VALUES),
+            PropValue::Known(RgbRange::Auto)
+        );
+        assert_eq!(
+            prop_enum(&props_with("rgb-range", 2), "rgb-range", &RGB_RANGE_VALUES),
+            PropValue::Known(RgbRange::Full)
+        );
+        assert_eq!(
+            prop_enum(&props_with("rgb-range", 3), "rgb-range", &RGB_RANGE_VALUES),
+            PropValue::Known(RgbRange::Limited)
+        );
+    }
+
+    // code-review follow-up (Copilot, PR #8): "unrecognized code" and
+    // "property absent" used to collapse into the same `None` — kept
+    // distinct now so `export` can tell "nothing to say" apart from "lost a
+    // real value" and warn only for the latter.
+    #[test]
+    fn distinguishes_unrecognized_code_from_absent_property() {
+        assert_eq!(
+            prop_enum(
+                &props_with("color-mode", 99),
+                "color-mode",
+                &COLOR_MODE_VALUES
+            ),
+            PropValue::Unrecognized(99)
+        );
+        assert_eq!(
+            prop_enum(&BTreeMap::new(), "color-mode", &COLOR_MODE_VALUES),
+            PropValue::Absent
+        );
+    }
 }

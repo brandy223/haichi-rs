@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use derive_more::{Display, FromStr};
 use toml::Value;
 
 use crate::core::error::ConfigError;
@@ -21,18 +22,101 @@ pub fn default_path() -> PathBuf {
         .join("config.toml")
 }
 
-pub const TRANSFORMS: [&str; 8] = [
-    "normal",
-    "90",
-    "180",
-    "270",
-    "flipped",
-    "flipped-90",
-    "flipped-180",
-    "flipped-270",
-];
+/// Values the config schema accepts for `transform`, matching what gdctl(1)
+/// documents for `gdctl set --transform` — this one is Wayland's
+/// foundational `wl_output.transform` enum, stable across Mutter versions,
+/// unlike `ColorMode`'s caveat below. The `lowercase` display/parsing
+/// reproduces gdctl's own spelling for `90`/`180`/`270` (`90` <-> `"90"`)
+/// with no per-variant literal needed — except
+/// `Flipped90`/`Flipped180`/`Flipped270`, which need a `-` (`"flipped-90"`),
+/// so those three get an explicit `kebab-case` override.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
+#[display(rename_all = "kebab-case")]
+#[from_str(rename_all = "kebab-case")]
+pub enum Transform {
+    Normal = 0,
+    #[display(rename_all = "lowercase")]
+    #[from_str(rename_all = "lowercase")]
+    _90 = 1,
+    #[display(rename_all = "lowercase")]
+    #[from_str(rename_all = "lowercase")]
+    _180 = 2,
+    #[display(rename_all = "lowercase")]
+    #[from_str(rename_all = "lowercase")]
+    _270 = 3,
+    Flipped = 4,
+    Flipped90 = 5,
+    Flipped180 = 6,
+    Flipped270 = 7,
+}
 
-const SCREEN_KEYS: [&str; 10] = [
+impl Transform {
+    pub const ALL: [Transform; 8] = [
+        Transform::Normal,
+        Transform::_90,
+        Transform::_180,
+        Transform::_270,
+        Transform::Flipped,
+        Transform::Flipped90,
+        Transform::Flipped180,
+        Transform::Flipped270,
+    ];
+}
+
+/// Values the config schema accepts for `color-mode`. gdctl(1) documents
+/// `default`, `sdr-native` and `bt2100`, but — code-review follow-up
+/// (Copilot, PR #8) — actual acceptance depends on the installed
+/// gdctl/Mutter version, not just this list: e.g. the Mutter 49.7 build this
+/// was verified against only accepts `default`/`bt2100` for
+/// `gdctl set --color-mode` (`SdrNative` is kept for forward-compat, not
+/// because it's confirmed to work everywhere — `gdctl` itself is the final
+/// arbiter and will reject it with its own error on a build that doesn't
+/// support it yet). `Bt2100` is HDR. `lowercase` display/parsing reproduces
+/// gdctl's own spelling for `Default`/`Bt2100` (`Bt2100` <-> `"bt2100"`) with
+/// no per-variant literal needed — except `SdrNative`, which needs a `-`
+/// (`"sdr-native"`), so that one gets an explicit `kebab-case` override.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
+#[display(rename_all = "lowercase")]
+#[from_str(rename_all = "lowercase")]
+pub enum ColorMode {
+    Default,
+    #[display(rename_all = "kebab-case")]
+    #[from_str(rename_all = "kebab-case")]
+    SdrNative,
+    Bt2100,
+}
+
+impl ColorMode {
+    pub const ALL: [ColorMode; 3] = [ColorMode::Default, ColorMode::SdrNative, ColorMode::Bt2100];
+}
+
+/// Values the config schema accepts for `rgb-range`, per gdctl(1) — see the
+/// `ColorMode` doc comment for the same "gdctl(1) documents it, but actual
+/// per-version acceptance may differ" caveat.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
+#[display(rename_all = "lowercase")]
+#[from_str(rename_all = "lowercase")]
+pub enum RgbRange {
+    Auto,
+    Full,
+    Limited,
+}
+
+impl RgbRange {
+    pub const ALL: [RgbRange; 3] = [RgbRange::Auto, RgbRange::Full, RgbRange::Limited];
+}
+
+/// Joins a slice of `Display`-able values for a "not one of ..." problem
+/// message — shared by the `ColorMode`/`RgbRange` parse errors below.
+fn allowed_list<T: std::fmt::Display>(values: &[T]) -> String {
+    values
+        .iter()
+        .map(T::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+const SCREEN_KEYS: [&str; 13] = [
     "vendor",
     "product",
     "serial",
@@ -43,6 +127,9 @@ const SCREEN_KEYS: [&str; 10] = [
     "scale",
     "transform",
     "primary",
+    "color-mode",
+    "rgb-range",
+    "luminance",
 ];
 
 #[derive(Debug, Clone)]
@@ -55,10 +142,18 @@ pub struct Screen {
     pub x: i32,
     pub y: i32,
     pub scale: f64,
-    pub transform: String,
+    pub transform: Transform,
     pub primary: bool,
     /// Optional pin, breaks identity ties.
     pub connector: Option<String>,
+    /// `gdctl set --color-mode`.
+    pub color_mode: Option<ColorMode>,
+    /// `gdctl set --rgb-range`.
+    pub rgb_range: Option<RgbRange>,
+    /// `gdctl pref --luminance`, applied to whichever color mode ends up
+    /// active after `apply`. A separate command from `set` — see
+    /// `commands::apply::gdctl::build_pref_commands`.
+    pub luminance: Option<f64>,
 }
 
 impl Screen {
@@ -89,6 +184,35 @@ fn scalar_string(value: &Value) -> String {
     }
 }
 
+/// Reads and parses an optional enum-valued field (`color-mode`,
+/// `rgb-range`, `transform`): absent stays `None`, present-but-unparseable
+/// pushes a problem listing the allowed values and returns `None`
+/// (discarded along with the rest of the screen once `problems` is
+/// non-empty, same as every other field here). `transform` has a default
+/// unlike the other two, so its caller chains `.unwrap_or(Transform::Normal)`.
+fn parse_enum_field<T>(
+    raw: Option<&Value>,
+    field: &str,
+    allowed: &[T],
+    where_: &str,
+    problems: &mut Vec<String>,
+) -> Option<T>
+where
+    T: std::str::FromStr + std::fmt::Display,
+{
+    let raw = scalar_string(raw?);
+    match raw.parse::<T>() {
+        Ok(value) => Some(value),
+        Err(_) => {
+            problems.push(format!(
+                "{where_}: {field} {raw:?} is not one of {}",
+                allowed_list(allowed)
+            ));
+            None
+        }
+    }
+}
+
 fn truthy(value: &Value) -> bool {
     match value {
         Value::Boolean(b) => *b,
@@ -101,23 +225,47 @@ fn truthy(value: &Value) -> bool {
     }
 }
 
-/// Reads a numeric field, defaulting when absent and rejecting anything that
-/// isn't a plain number (booleans included — `bool` overlaps `int` in TOML's
-/// type model no more than in Rust's, so this is just a type check here).
-fn number(value: Option<&Value>, field: &str, where_: &str, default: f64) -> Result<f64, String> {
+/// Coerces a TOML value to `f64` if it's a plain number (booleans excluded —
+/// `bool` overlaps `int` in TOML's type model no more than in Rust's, so this
+/// is just a type check here). No side effects; callers report their own
+/// problem on `None`, since what counts as "invalid" differs (an absent
+/// field is fine for `number` but not for `luminance`).
+fn as_number(value: &Value) -> Option<f64> {
     match value {
-        None => Ok(default),
-        Some(Value::Integer(i)) => Ok(*i as f64),
-        Some(Value::Float(f)) => Ok(*f),
-        Some(other) => Err(format!("{where_}: {field} must be a number, got {other}")),
+        Value::Integer(i) => Some(*i as f64),
+        Value::Float(f) => Some(*f),
+        _ => None,
+    }
+}
+
+/// Coerces a TOML value to `f64` if it's a plain number (booleans excluded —
+/// `bool` overlaps `int` in TOML's type model no more than in Rust's, so this
+/// is just a type check here). If the value is absent or not a number, reports
+/// a problem and returns the default.
+fn number(
+    problems: &mut Vec<String>,
+    value: Option<&Value>,
+    field: &str,
+    where_: &str,
+    default: f64,
+) -> f64 {
+    match value {
+        None => default,
+        Some(value) => as_number(value).unwrap_or_else(|| {
+            problems.push(format!("{where_}: {field} must be a number, got {value}"));
+            default
+        }),
     }
 }
 
 pub fn load_layout(path: &Path) -> Result<Layout, ConfigError> {
-    let text = std::fs::read_to_string(path)
-        .map_err(|e| ConfigError::single(format!("cannot read {}: {e}", path.display())))?;
-    let raw: Value = toml::from_str(&text).map_err(|e: toml::de::Error| {
-        ConfigError::single(format!("{}: invalid TOML: {e}", path.display()))
+    let text = std::fs::read_to_string(path).map_err(|e| ConfigError::FileReadError {
+        path: path.display().to_string(),
+        source: e,
+    })?;
+    let raw: Value = toml::from_str(&text).map_err(|e| ConfigError::InvalidFormat {
+        path: path.display().to_string(),
+        source: e,
     })?;
     parse_layout(raw)
 }
@@ -139,8 +287,9 @@ fn parse_layout(raw: Value) -> Result<Layout, ConfigError> {
     let screens_table = match raw.get("screens").and_then(Value::as_table) {
         Some(t) if !t.is_empty() => t,
         _ => {
-            problems.push("no [screens.*] tables found; nothing to apply".to_string());
-            return Err(ConfigError::new(problems));
+            return Err(ConfigError::EmptyConfig(
+                "no [screens.*] tables found; nothing to apply".to_string(),
+            ));
         }
     };
 
@@ -174,30 +323,18 @@ fn parse_layout(raw: Value) -> Result<Layout, ConfigError> {
             continue;
         }
 
-        let transform = body
-            .get("transform")
-            .map(scalar_string)
-            .unwrap_or_else(|| "normal".to_string());
-        if !TRANSFORMS.contains(&transform.as_str()) {
-            problems.push(format!(
-                "{where_}: transform {transform:?} is not one of {}",
-                TRANSFORMS.join(", ")
-            ));
-        }
+        let transform = parse_enum_field(
+            body.get("transform"),
+            "transform",
+            &Transform::ALL,
+            &where_,
+            &mut problems,
+        )
+        .unwrap_or(Transform::Normal);
 
-        let numeric = (|| -> Result<(i32, i32, f64), String> {
-            let x = number(body.get("x"), "x", &where_, 0.0)?;
-            let y = number(body.get("y"), "y", &where_, 0.0)?;
-            let scale = number(body.get("scale"), "scale", &where_, 1.0)?;
-            Ok((x as i32, y as i32, scale))
-        })();
-        let (x, y, scale) = match numeric {
-            Ok(triple) => triple,
-            Err(problem) => {
-                problems.push(problem);
-                continue;
-            }
-        };
+        let x = number(&mut problems, body.get("x"), "x", &where_, 0.0) as i32;
+        let y = number(&mut problems, body.get("y"), "y", &where_, 0.0) as i32;
+        let scale = number(&mut problems, body.get("scale"), "scale", &where_, 1.0);
 
         let primary = match body.get("primary") {
             None => false,
@@ -206,6 +343,42 @@ fn parse_layout(raw: Value) -> Result<Layout, ConfigError> {
                 problems.push(format!("{where_}: primary must be true or false"));
                 truthy(other)
             }
+        };
+
+        let color_mode = parse_enum_field(
+            body.get("color-mode"),
+            "color-mode",
+            &ColorMode::ALL,
+            &where_,
+            &mut problems,
+        );
+        let rgb_range = parse_enum_field(
+            body.get("rgb-range"),
+            "rgb-range",
+            &RgbRange::ALL,
+            &where_,
+            &mut problems,
+        );
+
+        // Uses `as_number` rather than `number`: unlike x/y/scale, an absent
+        // luminance means `None` (no default to fall back to), and a
+        // present-but-non-numeric value should report just the type error,
+        // not that *and* a misleading "not > 0" on top of it.
+        let luminance = match body.get("luminance") {
+            None => None,
+            Some(value) => match as_number(value) {
+                Some(n) if n > 0.0 && n.is_finite() => Some(n),
+                Some(_) => {
+                    problems.push(format!(
+                        "{where_}: luminance must be a finite number greater than 0"
+                    ));
+                    None
+                }
+                None => {
+                    problems.push(format!("{where_}: luminance must be a number, got {value}"));
+                    None
+                }
+            },
         };
 
         screens.push(Screen {
@@ -220,6 +393,9 @@ fn parse_layout(raw: Value) -> Result<Layout, ConfigError> {
             transform,
             primary,
             connector: body.get("connector").map(scalar_string),
+            color_mode,
+            rgb_range,
+            luminance,
         });
     }
 
@@ -254,7 +430,7 @@ fn parse_layout(raw: Value) -> Result<Layout, ConfigError> {
     }
 
     if !problems.is_empty() {
-        return Err(ConfigError::new(problems));
+        return Err(ConfigError::InvalidFieldValues(problems));
     }
 
     Ok(Layout {
@@ -290,7 +466,7 @@ mod tests {
         assert_eq!(screen.vendor, "LHC");
         assert_eq!(screen.x, 0);
         assert_eq!(screen.scale, 1.0);
-        assert_eq!(screen.transform, "normal");
+        assert_eq!(screen.transform, Transform::Normal);
         assert!(screen.primary);
         assert!(screen.connector.is_none());
     }
@@ -298,8 +474,11 @@ mod tests {
     #[test]
     fn rejects_missing_required_keys() {
         let err = parse("[screens.main]\nvendor = \"LHC\"\n").unwrap_err();
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
         assert!(
-            err.problems
+            problems
                 .iter()
                 .any(|p| p.contains("missing required key(s)"))
         );
@@ -319,11 +498,10 @@ mod tests {
             "#,
         )
         .unwrap_err();
-        assert!(
-            err.problems
-                .iter()
-                .any(|p| p.contains("unknown key(s): bogus"))
-        );
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("unknown key(s): bogus")));
     }
 
     #[test]
@@ -338,7 +516,10 @@ mod tests {
             "#,
         )
         .unwrap_err();
-        assert!(none_primary.problems.iter().any(|p| p.contains("none is")));
+        let ConfigError::InvalidFieldValues(problems) = &none_primary else {
+            panic!("expected InvalidFieldValues, got: {none_primary:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("none is")));
 
         let two_primary = parse(
             r#"
@@ -358,12 +539,10 @@ mod tests {
             "#,
         )
         .unwrap_err();
-        assert!(
-            two_primary
-                .problems
-                .iter()
-                .any(|p| p.contains("but these are"))
-        );
+        let ConfigError::InvalidFieldValues(problems) = &two_primary else {
+            panic!("expected InvalidFieldValues, got: {two_primary:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("but these are")));
     }
 
     #[test]
@@ -385,7 +564,10 @@ mod tests {
             "#,
         )
         .unwrap_err();
-        assert!(err.problems.iter().any(|p| p.contains("pin each one")));
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("pin each one")));
 
         // Screens are visited in table-key order ("a" before "b"). The check
         // only looks at the *current* screen's own connector, so pinning "b"
@@ -425,13 +607,17 @@ mod tests {
             "#,
         )
         .unwrap_err();
-        assert!(err.problems.iter().any(|p| p.contains("transform")));
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("transform")));
     }
 
     #[test]
     fn accepts_an_unquoted_numeric_transform() {
-        // `transform = 270` (no quotes) still matches the string "270", the
-        // same loose coercion the original Python tool applied via `str()`.
+        // `transform = 270` (no quotes) still coerces to the string "270"
+        // before parsing (the same loose coercion the original Python tool
+        // applied via `str()`), which still parses to `Transform::_270`.
         let layout = parse(
             r#"
             [screens.main]
@@ -444,7 +630,7 @@ mod tests {
             "#,
         )
         .expect("numeric transform should coerce to a string");
-        assert_eq!(layout.screens[0].transform, "270");
+        assert_eq!(layout.screens[0].transform, Transform::_270);
     }
 
     #[test]
@@ -461,20 +647,212 @@ mod tests {
             "#,
         )
         .unwrap_err();
-        assert!(
-            err.problems
-                .iter()
-                .any(|p| p.contains("x must be a number"))
-        );
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("x must be a number")));
+    }
+
+    #[test]
+    fn reports_every_problem_on_a_screen_not_just_the_first() {
+        let err = parse(
+            r#"
+            [screens.main]
+            vendor = "LHC"
+            product = "P2710S"
+            serial = "0"
+            mode = "1920x1080@60"
+            primary = true
+            x = "not-a-number"
+            y = "also-not-a-number"
+            color-mode = "vivid"
+            "#,
+        )
+        .unwrap_err();
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("x must be a number")));
+        assert!(problems.iter().any(|p| p.contains("y must be a number")));
+        assert!(problems.iter().any(|p| p.contains("color-mode")));
     }
 
     #[test]
     fn rejects_empty_layout() {
         let err = parse("").unwrap_err();
+        assert!(matches!(err, ConfigError::EmptyConfig(_)));
+    }
+
+    #[test]
+    fn parses_color_mode_rgb_range_and_luminance() {
+        let layout = parse(
+            r#"
+            [screens.main]
+            vendor = "LHC"
+            product = "P2710S"
+            serial = "0"
+            mode = "1920x1080@60"
+            primary = true
+            color-mode = "bt2100"
+            rgb-range = "full"
+            luminance = 400
+            "#,
+        )
+        .expect("valid color settings should parse");
+
+        let screen = &layout.screens[0];
+        assert_eq!(screen.color_mode, Some(ColorMode::Bt2100));
+        assert_eq!(screen.rgb_range, Some(RgbRange::Full));
+        assert_eq!(screen.luminance, Some(400.0));
+    }
+
+    #[test]
+    fn color_mode_rgb_range_and_luminance_default_to_none() {
+        let layout = parse(
+            r#"
+            [screens.main]
+            vendor = "LHC"
+            product = "P2710S"
+            serial = "0"
+            mode = "1920x1080@60"
+            primary = true
+            "#,
+        )
+        .expect("valid layout should parse");
+
+        let screen = &layout.screens[0];
+        assert!(screen.color_mode.is_none());
+        assert!(screen.rgb_range.is_none());
+        assert!(screen.luminance.is_none());
+    }
+
+    #[test]
+    fn rejects_unknown_color_mode() {
+        let err = parse(
+            r#"
+            [screens.main]
+            vendor = "LHC"
+            product = "P2710S"
+            serial = "0"
+            mode = "1920x1080@60"
+            primary = true
+            color-mode = "vivid"
+            "#,
+        )
+        .unwrap_err();
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("color-mode")));
+    }
+
+    #[test]
+    fn rejects_unknown_rgb_range() {
+        let err = parse(
+            r#"
+            [screens.main]
+            vendor = "LHC"
+            product = "P2710S"
+            serial = "0"
+            mode = "1920x1080@60"
+            primary = true
+            rgb-range = "wide"
+            "#,
+        )
+        .unwrap_err();
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("rgb-range")));
+    }
+
+    #[test]
+    fn rejects_non_positive_luminance() {
+        let err = parse(
+            r#"
+            [screens.main]
+            vendor = "LHC"
+            product = "P2710S"
+            serial = "0"
+            mode = "1920x1080@60"
+            primary = true
+            luminance = 0
+            "#,
+        )
+        .unwrap_err();
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
         assert!(
-            err.problems
+            problems
                 .iter()
-                .any(|p| p.contains("no [screens.*] tables"))
+                .any(|p| p.contains("luminance must be a finite number greater than 0"))
         );
+    }
+
+    #[test]
+    fn rejects_non_finite_luminance() {
+        let err = parse(
+            r#"
+            [screens.main]
+            vendor = "LHC"
+            product = "P2710S"
+            serial = "0"
+            mode = "1920x1080@60"
+            primary = true
+            luminance = inf
+            "#,
+        )
+        .unwrap_err();
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
+        assert!(
+            problems
+                .iter()
+                .any(|p| p.contains("luminance must be a finite number greater than 0"))
+        );
+    }
+
+    // `#[display(rename_all = "lowercase")]` alone silently produced
+    // "sdrnative" for `SdrNative` — a wrong-but-plausible string that
+    // only surfaced as a parse failure in `parses_color_mode_rgb_range_and_luminance`,
+    // not a compile error. Pinning the exact gdctl(1) spelling here, for every
+    // variant, catches that class of mistake directly instead of relying on
+    // it showing up as a coincidental failure somewhere else.
+    #[test]
+    fn color_mode_and_rgb_range_match_gdctl_spelling_and_round_trip() {
+        assert_eq!(ColorMode::Default.to_string(), "default");
+        assert_eq!(ColorMode::SdrNative.to_string(), "sdr-native");
+        assert_eq!(ColorMode::Bt2100.to_string(), "bt2100");
+        assert_eq!(RgbRange::Auto.to_string(), "auto");
+        assert_eq!(RgbRange::Full.to_string(), "full");
+        assert_eq!(RgbRange::Limited.to_string(), "limited");
+
+        for mode in ColorMode::ALL {
+            assert_eq!(mode.to_string().parse::<ColorMode>().unwrap(), mode);
+        }
+        for range in RgbRange::ALL {
+            assert_eq!(range.to_string().parse::<RgbRange>().unwrap(), range);
+        }
+    }
+
+    #[test]
+    fn transform_matches_gdctl_spelling_and_round_trips() {
+        assert_eq!(Transform::Normal.to_string(), "normal");
+        assert_eq!(Transform::_90.to_string(), "90");
+        assert_eq!(Transform::_180.to_string(), "180");
+        assert_eq!(Transform::_270.to_string(), "270");
+        assert_eq!(Transform::Flipped.to_string(), "flipped");
+        assert_eq!(Transform::Flipped90.to_string(), "flipped-90");
+        assert_eq!(Transform::Flipped180.to_string(), "flipped-180");
+        assert_eq!(Transform::Flipped270.to_string(), "flipped-270");
+
+        for transform in Transform::ALL {
+            assert_eq!(
+                transform.to_string().parse::<Transform>().unwrap(),
+                transform
+            );
+        }
     }
 }

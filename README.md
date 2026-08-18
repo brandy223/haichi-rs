@@ -73,6 +73,9 @@ scale = 1                      # default 1
 transform = "270"              # default "normal"
 primary = true                 # exactly one screen must set this
 connector = "DP-9"             # optional pin, see below
+color-mode = "bt2100"          # optional: "default" | "sdr-native" | "bt2100" (HDR)
+rgb-range = "full"             # optional: "auto" | "full" | "limited"
+luminance = 400                # optional, applied via `gdctl pref` after `set`
 ```
 
 Table names (`p2710s`) are labels for your own benefit; nothing matches on them.
@@ -84,6 +87,16 @@ Table names (`p2710s`) are labels for your own benefit; nothing matches on them.
 preferred is frequently *not* the fastest mode (this machine's P2710S prefers
 60 Hz and runs at 240 Hz), so a default would silently downgrade refresh rate.
 `export` fills it in from the live state.
+
+`color-mode`, `rgb-range` and `luminance` are all optional and independent;
+omitting them leaves that setting untouched. `color-mode = "bt2100"` is what
+turns HDR on for a screen. `color-mode` and `rgb-range` are applied as part of
+`gdctl set`, alongside the rest of the layout. `luminance` is not — per
+gdctl(1) it applies to "the current color mode", so `apply` sets it via a
+separate `gdctl pref --monitor <connector> --luminance <value>` call made
+*after* `set` succeeds, once that color mode is actually active. It is
+skipped under `--verify`, since `pref` has no verify-only mode of its own and
+always writes for real.
 
 ## Why identity, not connector
 
@@ -155,7 +168,15 @@ so it means "re-run `GetCurrentState`".
   and run them in sequence — each is a no-op unless its screens are present.
 - **The GDM greeter** keeps its own `/var/lib/gdm/.config/monitors.xml`
   (`chown gdm:gdm`, `restorecon` on SELinux). Out of scope.
-- `color-mode`, `rgb-range` and luminance (`gdctl pref`) are not modelled.
+- **`export` does not read back `luminance`.** `GetCurrentState` has no
+  luminance property to read (confirmed against a live Mutter 49.7 session —
+  it is set-only, via `gdctl pref`); add it back by hand after a re-`export`.
+  `color-mode` and `rgb-range` *are* read back (only when off their default,
+  same as `primary`) — except `color-mode = "sdr-native"`: this Mutter build's
+  own `gdctl set --color-mode` doesn't offer it yet (only `default`/`bt2100`),
+  so no wire value for it has been observed, and a monitor actually in that
+  mode on some future Mutter build would export as if untouched. (See
+  `core::state::COLOR_MODE_VALUES`, code-review fix trace.)
 
 ## Roadmap
 
@@ -169,11 +190,14 @@ Not yet implemented, roughly in order of likely usefulness:
   reference screen's geometry changes.
 - [ ] **`MonitorsChanged` listener** — a long-running mode that re-runs
   `GetCurrentState` on that signal and re-applies, for the case where hotplug
-  picks the wrong layout at the Mutter level.
+  picks the wrong layout at the Mutter level (`haichi watch`).
 - [ ] **Multiple layouts per invocation** — try each file in a set and apply
   the first whose screens are all present, instead of the caller having to
   sequence `haichi apply` calls itself.
-- [ ] **`color-mode` / `rgb-range` / luminance** (`gdctl pref`) modelling.
+- [x] **`color-mode` / `rgb-range` / luminance** modelling — `color-mode`
+  (HDR is `bt2100`) and `rgb-range` are set via `gdctl set` and read back by
+  `export` (`sdr-native` excepted, see Limitations); `luminance` is set via a
+  follow-up `gdctl pref` call but, per Limitations, cannot be read back.
 - [ ] **GDM greeter config** — optional support for
   `/var/lib/gdm/.config/monitors.xml`, so the greeter's layout can be managed
   the same way as the session's.
@@ -192,6 +216,7 @@ Not yet implemented, roughly in order of likely usefulness:
   supports), instead of hand-typing exact-match strings like
   `2560x1440@240.002`. Builds on `list` (for the live data) and `check` (for
   the same validation, reused instead of duplicated).
+- [ ] **`gdctl` replacement** — a pure-Rust implementation of the `gdctl` subcommands used here, so `haichi` can apply layouts without shelling out to an external binary. This would also allow for more advanced features like batching multiple changes in a single D-Bus transaction.
 
 ## Rebuilding `monitors.xml`
 
