@@ -7,14 +7,13 @@
         "RUSTC_WRAPPER": "sccache",
     },
     "remoteEnv": {
-        "GH_TOKEN": "${localEnv:GH_TOKEN}",
-        "GIT_AUTHOR_NAME": "${localEnv:GIT_AUTHOR_NAME}",
-        "GIT_AUTHOR_EMAIL": "${localEnv:GIT_AUTHOR_EMAIL}"
+        "GH_TOKEN": "${localEnv:GH_TOKEN}"
     },
     "remoteUser": "dev",
     // Usable parameter only in linux or macOS w/ Docker Desktop (seems unusable w/ Podman)
     "mounts": [
-        "source=${localEnv:HOME}/.zsh_history,target=/home/dev/.zsh_history,type=bind,consistency=cached"
+        // "source=${localEnv:HOME}/.zsh_history,target=/home/dev/.zsh_history,type=bind,consistency=cached",
+        // "source=${localEnv:HOME}/.p10k.zsh,target=/home/dev/.p10k.zsh,type=bind,readonly"
     ],
     "runArgs": [
         "--userns=keep-id:uid=1000",
@@ -33,5 +32,5 @@
     },
     "onCreateCommand": ["rustup", "show"],
     "postStartCommand": ["cargo", "fetch"],
-    "postCreateCommand": "gh auth setup-git || git config --global --replace-all 'credential.https://github.com.helper' '!gh auth git-credential'"
+    "postCreateCommand": "gh auth setup-git"
 }
