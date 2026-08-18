@@ -88,7 +88,7 @@ pub fn build_pref_commands(resolved: &[Resolved]) -> Vec<Vec<String>> {
 mod tests {
     use super::*;
     use crate::core::config::{ColorMode, RgbRange, Screen, Transform};
-    use crate::core::state::Monitor;
+    use crate::core::state::{Monitor, PropValue};
 
     fn screen(name: &str, primary: bool) -> Screen {
         Screen {
@@ -117,8 +117,8 @@ mod tests {
             serial: "0".to_string(),
             display_name: String::new(),
             modes: Vec::new(),
-            color_mode: Some(ColorMode::Default),
-            rgb_range: Some(RgbRange::Auto),
+            color_mode: PropValue::Known(ColorMode::Default),
+            rgb_range: PropValue::Known(RgbRange::Auto),
         }
     }
 

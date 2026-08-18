@@ -127,7 +127,7 @@ pub fn fmt_scale(value: f64) -> String {
 mod tests {
     use super::*;
     use crate::core::config::{ColorMode, RgbRange, Screen, Transform};
-    use crate::core::state::Mode;
+    use crate::core::state::{Mode, PropValue};
 
     fn mode(id: &str, scales: &[f64]) -> Mode {
         Mode {
@@ -156,8 +156,8 @@ mod tests {
             serial: serial.to_string(),
             display_name: String::new(),
             modes,
-            color_mode: Some(ColorMode::Default),
-            rgb_range: Some(RgbRange::Auto),
+            color_mode: PropValue::Known(ColorMode::Default),
+            rgb_range: PropValue::Known(RgbRange::Auto),
         }
     }
 

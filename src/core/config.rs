@@ -22,9 +22,12 @@ pub fn default_path() -> PathBuf {
         .join("config.toml")
 }
 
-/// Values accepted by `gdctl set --transform`, per gdctl(1). The `lowercase`
-/// display/parsing reproduces gdctl's own spelling for `90`/`180`/`270`
-/// (`90` <-> `"90"`) with no per-variant literal needed — except
+/// Values the config schema accepts for `transform`, matching what gdctl(1)
+/// documents for `gdctl set --transform` — this one is Wayland's
+/// foundational `wl_output.transform` enum, stable across Mutter versions,
+/// unlike `ColorMode`'s caveat below. The `lowercase` display/parsing
+/// reproduces gdctl's own spelling for `90`/`180`/`270` (`90` <-> `"90"`)
+/// with no per-variant literal needed — except
 /// `Flipped90`/`Flipped180`/`Flipped270`, which need a `-` (`"flipped-90"`),
 /// so those three get an explicit `kebab-case` override.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
@@ -60,11 +63,18 @@ impl Transform {
     ];
 }
 
-/// Values accepted by `gdctl set --color-mode`, per gdctl(1). `Bt2100` is
-/// HDR. `lowercase` display/parsing reproduces gdctl's own spelling for
-/// `Default`/`Bt2100` (`Bt2100` <-> `"bt2100"`) with no per-variant literal
-/// needed — except `SdrNative`, which needs a `-` (`"sdr-native"`), so that
-/// one gets an explicit `kebab-case` override.
+/// Values the config schema accepts for `color-mode`. gdctl(1) documents
+/// `default`, `sdr-native` and `bt2100`, but — code-review follow-up
+/// (Copilot, PR #8) — actual acceptance depends on the installed
+/// gdctl/Mutter version, not just this list: e.g. the Mutter 49.7 build this
+/// was verified against only accepts `default`/`bt2100` for
+/// `gdctl set --color-mode` (`SdrNative` is kept for forward-compat, not
+/// because it's confirmed to work everywhere — `gdctl` itself is the final
+/// arbiter and will reject it with its own error on a build that doesn't
+/// support it yet). `Bt2100` is HDR. `lowercase` display/parsing reproduces
+/// gdctl's own spelling for `Default`/`Bt2100` (`Bt2100` <-> `"bt2100"`) with
+/// no per-variant literal needed — except `SdrNative`, which needs a `-`
+/// (`"sdr-native"`), so that one gets an explicit `kebab-case` override.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
 #[display(rename_all = "lowercase")]
 #[from_str(rename_all = "lowercase")]
@@ -80,7 +90,9 @@ impl ColorMode {
     pub const ALL: [ColorMode; 3] = [ColorMode::Default, ColorMode::SdrNative, ColorMode::Bt2100];
 }
 
-/// Values accepted by `gdctl set --rgb-range`, per gdctl(1).
+/// Values the config schema accepts for `rgb-range`, per gdctl(1) — see the
+/// `ColorMode` doc comment for the same "gdctl(1) documents it, but actual
+/// per-version acceptance may differ" caveat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
 #[display(rename_all = "lowercase")]
 #[from_str(rename_all = "lowercase")]
