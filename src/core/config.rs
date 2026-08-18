@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use derive_more::{Display, FromStr};
 use toml::Value;
 
 use crate::core::error::ConfigError;
@@ -32,11 +33,50 @@ pub const TRANSFORMS: [&str; 8] = [
     "flipped-270",
 ];
 
-/// Values accepted by `gdctl set --color-mode`, per gdctl(1).
-pub const COLOR_MODES: [&str; 3] = ["default", "sdr-native", "bt2100"];
+/// Values accepted by `gdctl set --color-mode`, per gdctl(1). `Bt2100` is
+/// HDR. `lowercase` display/parsing reproduces gdctl's own spelling for
+/// `Default`/`Bt1200` (`Bt1200` <-> `"bt1200"`) with no per-variant
+/// literal needed — except `SdrNative` needing a `-` such as `sdr-native`
+///  (verified: this is what broke `.parse()` on the first attempt), so
+/// that one needs an explicit override to match gdctl's actual `"sdr-native"`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
+#[display(rename_all = "lowercase")]
+#[from_str(rename_all = "lowercase")]
+pub enum ColorMode {
+    Default,
+    #[display(rename_all = "kebab-case")]
+    #[from_str(rename_all = "kebab-case")]
+    SdrNative,
+    Bt2100,
+}
+
+impl ColorMode {
+    pub const ALL: [ColorMode; 3] = [ColorMode::Default, ColorMode::SdrNative, ColorMode::Bt2100];
+}
 
 /// Values accepted by `gdctl set --rgb-range`, per gdctl(1).
-pub const RGB_RANGES: [&str; 3] = ["auto", "full", "limited"];
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
+#[display(rename_all = "lowercase")]
+#[from_str(rename_all = "lowercase")]
+pub enum RgbRange {
+    Auto,
+    Full,
+    Limited,
+}
+
+impl RgbRange {
+    pub const ALL: [RgbRange; 3] = [RgbRange::Auto, RgbRange::Full, RgbRange::Limited];
+}
+
+/// Joins a slice of `Display`-able values for a "not one of ..." problem
+/// message — shared by the `ColorMode`/`RgbRange` parse errors below.
+fn allowed_list<T: std::fmt::Display>(values: &[T]) -> String {
+    values
+        .iter()
+        .map(T::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
 
 const SCREEN_KEYS: [&str; 13] = [
     "vendor",
@@ -68,10 +108,10 @@ pub struct Screen {
     pub primary: bool,
     /// Optional pin, breaks identity ties.
     pub connector: Option<String>,
-    /// `gdctl set --color-mode`: one of [`COLOR_MODES`]. `bt2100` is HDR.
-    pub color_mode: Option<String>,
-    /// `gdctl set --rgb-range`: one of [`RGB_RANGES`].
-    pub rgb_range: Option<String>,
+    /// `gdctl set --color-mode`.
+    pub color_mode: Option<ColorMode>,
+    /// `gdctl set --rgb-range`.
+    pub rgb_range: Option<RgbRange>,
     /// `gdctl pref --luminance`, applied to whichever color mode ends up
     /// active after `apply`. A separate command from `set` — see
     /// `commands::apply::gdctl::build_pref_commands`.
@@ -106,9 +146,12 @@ fn scalar_string(value: &Value) -> String {
     }
 }
 
-// code-review: was duplicated once per field (transform, then color-mode,
-// then rgb-range); factored out so a fourth enum-like field is one call
-// instead of another copy of the same three lines.
+/// Validates that a string field is one of a set of allowed values, pushing
+/// a problem if not. Used for `transform` and the enum-valued fields.
+/// `allowed` is a slice of string literals, not the enum variants themselves, so
+/// the error message can list the allowed values exactly as they appear in the TOML.
+/// `where_` is a string describing the context (e.g., `[screens.main]`) for the error message.
+/// `problems` is a mutable vector to which the error message will be pushed if the validation fails.
 fn validate_one_of(
     value: &str,
     field: &str,
@@ -121,6 +164,34 @@ fn validate_one_of(
             "{where_}: {field} {value:?} is not one of {}",
             allowed.join(", ")
         ));
+    }
+}
+
+/// Reads and parses an optional enum-valued field (`color-mode`,
+/// `rgb-range`): absent stays `None`, present-but-unparseable pushes a
+/// problem listing the allowed values and returns `None` (discarded along
+/// with the rest of the screen once `problems` is non-empty, same as every
+/// other field here).
+fn parse_enum_field<T>(
+    raw: Option<&Value>,
+    field: &str,
+    allowed: &[T],
+    where_: &str,
+    problems: &mut Vec<String>,
+) -> Option<T>
+where
+    T: std::str::FromStr + std::fmt::Display,
+{
+    let raw = scalar_string(raw?);
+    match raw.parse::<T>() {
+        Ok(value) => Some(value),
+        Err(_) => {
+            problems.push(format!(
+                "{where_}: {field} {raw:?} is not one of {}",
+                allowed_list(allowed)
+            ));
+            None
+        }
     }
 }
 
@@ -253,21 +324,20 @@ fn parse_layout(raw: Value) -> Result<Layout, ConfigError> {
             }
         };
 
-        let color_mode = body.get("color-mode").map(scalar_string);
-        if let Some(color_mode) = &color_mode {
-            validate_one_of(
-                color_mode,
-                "color-mode",
-                &COLOR_MODES,
-                &where_,
-                &mut problems,
-            );
-        }
-
-        let rgb_range = body.get("rgb-range").map(scalar_string);
-        if let Some(rgb_range) = &rgb_range {
-            validate_one_of(rgb_range, "rgb-range", &RGB_RANGES, &where_, &mut problems);
-        }
+        let color_mode = parse_enum_field(
+            body.get("color-mode"),
+            "color-mode",
+            &ColorMode::ALL,
+            &where_,
+            &mut problems,
+        );
+        let rgb_range = parse_enum_field(
+            body.get("rgb-range"),
+            "rgb-range",
+            &RgbRange::ALL,
+            &where_,
+            &mut problems,
+        );
 
         // Uses `as_number` rather than `number`: unlike x/y/scale, an absent
         // luminance means `None` (no default to fall back to), and a
@@ -602,15 +672,15 @@ mod tests {
             mode = "1920x1080@60"
             primary = true
             color-mode = "bt2100"
-            rgb-range = "full"problems.iter().any(|p| p.contains("no [screens.*] tables"))
+            rgb-range = "full"
             luminance = 400
             "#,
         )
         .expect("valid color settings should parse");
 
         let screen = &layout.screens[0];
-        assert_eq!(screen.color_mode.as_deref(), Some("bt2100"));
-        assert_eq!(screen.rgb_range.as_deref(), Some("full"));
+        assert_eq!(screen.color_mode, Some(ColorMode::Bt2100));
+        assert_eq!(screen.rgb_range, Some(RgbRange::Full));
         assert_eq!(screen.luminance, Some(400.0));
     }
 
@@ -720,5 +790,28 @@ mod tests {
                 .iter()
                 .any(|p| p.contains("luminance must be a finite number greater than 0"))
         );
+    }
+
+    // `#[display(rename_all = "lowercase")]` alone silently produced
+    // "sdrnative" for `SdrNative` — a wrong-but-plausible string that
+    // only surfaced as a parse failure in `parses_color_mode_rgb_range_and_luminance`,
+    // not a compile error. Pinning the exact gdctl(1) spelling here, for every
+    // variant, catches that class of mistake directly instead of relying on
+    // it showing up as a coincidental failure somewhere else.
+    #[test]
+    fn color_mode_and_rgb_range_match_gdctl_spelling_and_round_trip() {
+        assert_eq!(ColorMode::Default.to_string(), "default");
+        assert_eq!(ColorMode::SdrNative.to_string(), "sdr-native");
+        assert_eq!(ColorMode::Bt2100.to_string(), "bt2100");
+        assert_eq!(RgbRange::Auto.to_string(), "auto");
+        assert_eq!(RgbRange::Full.to_string(), "full");
+        assert_eq!(RgbRange::Limited.to_string(), "limited");
+
+        for mode in ColorMode::ALL {
+            assert_eq!(mode.to_string().parse::<ColorMode>().unwrap(), mode);
+        }
+        for range in RgbRange::ALL {
+            assert_eq!(range.to_string().parse::<RgbRange>().unwrap(), range);
+        }
     }
 }

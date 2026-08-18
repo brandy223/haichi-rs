@@ -39,13 +39,13 @@ pub fn build_command(
         cmd.push(item.monitor.connector.clone());
         cmd.push("--mode".to_string());
         cmd.push(screen.mode.clone());
-        if let Some(color_mode) = &screen.color_mode {
+        if let Some(color_mode) = screen.color_mode {
             cmd.push("--color-mode".to_string());
-            cmd.push(color_mode.clone());
+            cmd.push(color_mode.to_string());
         }
-        if let Some(rgb_range) = &screen.rgb_range {
+        if let Some(rgb_range) = screen.rgb_range {
             cmd.push("--rgb-range".to_string());
-            cmd.push(rgb_range.clone());
+            cmd.push(rgb_range.to_string());
         }
     }
 
@@ -87,7 +87,7 @@ pub fn build_pref_commands(resolved: &[Resolved]) -> Vec<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::Screen;
+    use crate::core::config::{ColorMode, RgbRange, Screen};
     use crate::core::state::Monitor;
 
     fn screen(name: &str, primary: bool) -> Screen {
@@ -117,8 +117,8 @@ mod tests {
             serial: "0".to_string(),
             display_name: String::new(),
             modes: Vec::new(),
-            color_mode: "default".to_string(),
-            rgb_range: "auto".to_string(),
+            color_mode: Some(ColorMode::Default),
+            rgb_range: Some(RgbRange::Auto),
         }
     }
 
@@ -189,8 +189,8 @@ mod tests {
     #[test]
     fn color_mode_and_rgb_range_are_appended_after_mode_when_declared() {
         let mut screen = screen("main", true);
-        screen.color_mode = Some("bt2100".to_string());
-        screen.rgb_range = Some("full".to_string());
+        screen.color_mode = Some(ColorMode::Bt2100);
+        screen.rgb_range = Some(RgbRange::Full);
         let monitor = monitor("DP-9");
         let resolved = [Resolved {
             screen: &screen,

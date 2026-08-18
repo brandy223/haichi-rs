@@ -9,6 +9,7 @@ use serde::Deserialize;
 use zbus::blocking::{Connection, Proxy};
 use zbus::zvariant::{OwnedValue, Type};
 
+use crate::core::config::{ColorMode, RgbRange};
 use crate::core::error::AppError;
 
 const LAYOUT_MODE_LOGICAL: u32 = 1;
@@ -38,12 +39,11 @@ pub struct Monitor {
     pub serial: String,
     pub display_name: String,
     pub modes: Vec<Mode>,
-    /// `default` or `bt2100` (HDR); empty if Mutter reports an unrecognized
-    /// code, see [`COLOR_MODE_VALUES`].
-    pub color_mode: String,
-    /// `auto`, `full` or `limited`; same fallback as `color_mode`, see
-    /// [`RGB_RANGE_VALUES`].
-    pub rgb_range: String,
+    /// `None` if Mutter reports a wire code with no entry in
+    /// [`COLOR_MODE_VALUES`] (or the property is absent).
+    pub color_mode: Option<ColorMode>,
+    /// Same fallback as `color_mode`, see [`RGB_RANGE_VALUES`].
+    pub rgb_range: Option<RgbRange>,
 }
 
 impl Monitor {
@@ -164,16 +164,24 @@ fn prop_str(props: &BTreeMap<String, OwnedValue>, key: &str) -> String {
 /// off a live Mutter 49.7 session (`gdctl set --color-mode/--rgb-range` then
 /// `GetCurrentState` over `gdbus`), matching the string values `gdctl set`
 /// itself accepts. An unrecognized code (e.g. a color mode added by a newer
-/// Mutter) maps to `""`, the same as the property being absent.
-const COLOR_MODE_VALUES: [(u32, &str); 2] = [(0, "default"), (1, "bt2100")];
-const RGB_RANGE_VALUES: [(u32, &str); 3] = [(1, "auto"), (2, "full"), (3, "limited")];
+/// Mutter) maps to `None`, the same as the property being absent.
+const COLOR_MODE_VALUES: [(u32, ColorMode); 2] = [(0, ColorMode::Default), (1, ColorMode::Bt2100)];
+const RGB_RANGE_VALUES: [(u32, RgbRange); 3] = [
+    (1, RgbRange::Auto),
+    (2, RgbRange::Full),
+    (3, RgbRange::Limited),
+];
 
-fn prop_enum(props: &BTreeMap<String, OwnedValue>, key: &str, values: &[(u32, &str)]) -> String {
+fn prop_enum<T: Copy>(
+    props: &BTreeMap<String, OwnedValue>,
+    key: &str,
+    values: &[(u32, T)],
+) -> Option<T> {
     props
         .get(key)
         .and_then(|v| u32::try_from(v).ok())
         .and_then(|code| values.iter().find(|(c, _)| *c == code))
-        .map_or(String::new(), |(_, name)| name.to_string())
+        .map(|(_, value)| *value)
 }
 
 pub fn read_state() -> Result<State, AppError> {
@@ -268,7 +276,7 @@ mod tests {
                 "color-mode",
                 &COLOR_MODE_VALUES
             ),
-            "default"
+            Some(ColorMode::Default)
         );
         assert_eq!(
             prop_enum(
@@ -276,35 +284,37 @@ mod tests {
                 "color-mode",
                 &COLOR_MODE_VALUES
             ),
-            "bt2100"
+            Some(ColorMode::Bt2100)
         );
         assert_eq!(
             prop_enum(&props_with("rgb-range", 1), "rgb-range", &RGB_RANGE_VALUES),
-            "auto"
+            Some(RgbRange::Auto)
         );
         assert_eq!(
             prop_enum(&props_with("rgb-range", 2), "rgb-range", &RGB_RANGE_VALUES),
-            "full"
+            Some(RgbRange::Full)
         );
         assert_eq!(
             prop_enum(&props_with("rgb-range", 3), "rgb-range", &RGB_RANGE_VALUES),
-            "limited"
+            Some(RgbRange::Limited)
         );
     }
 
+    // code-review follow-up: previously named `..._decodes_to_empty` (the
+    // fallback was `""`); now `None`, since color_mode/rgb_range are typed.
     #[test]
-    fn unrecognized_code_or_missing_property_decodes_to_empty() {
+    fn unrecognized_code_or_missing_property_decodes_to_none() {
         assert_eq!(
             prop_enum(
                 &props_with("color-mode", 99),
                 "color-mode",
                 &COLOR_MODE_VALUES
             ),
-            ""
+            None
         );
         assert_eq!(
             prop_enum(&BTreeMap::new(), "color-mode", &COLOR_MODE_VALUES),
-            ""
+            None
         );
     }
 }

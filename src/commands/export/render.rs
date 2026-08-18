@@ -1,5 +1,6 @@
 //! Renders the live layout as an annotated TOML document.
 
+use crate::core::config::{ColorMode, RgbRange};
 use crate::core::resolve::fmt_scale;
 use crate::core::state::State;
 
@@ -41,11 +42,20 @@ fn slug(text: &str, fallback: &str) -> String {
     }
 }
 
-/// Pushes a key/value pair to the TOML document if the value is non-empty and
-/// not equal to the default. The value is quoted and escaped as a TOML basic string.
-fn push_if_non_default(lines: &mut Vec<String>, key: &str, value: &str, default: &str) {
-    if !value.is_empty() && value != default {
-        lines.push(format!("{key} = {}", toml_string(value)));
+/// Pushes `key = value` to the TOML document unless `value` is `None`
+/// (absent, or a wire code `core::state` didn't recognize) or equal to
+/// `default` — exactly what `gdctl` already assumes when the key is
+/// omitted, so there's nothing worth writing.
+fn push_if_non_default<T: PartialEq + std::fmt::Display>(
+    lines: &mut Vec<String>,
+    key: &str,
+    value: Option<T>,
+    default: T,
+) {
+    if let Some(value) = value {
+        if value != default {
+            lines.push(format!("{key} = {}", toml_string(&value.to_string())));
+        }
     }
 }
 
@@ -168,8 +178,13 @@ pub fn export_toml(state: &State) -> (String, Vec<String>) {
         }
         // Only written when the monitor is off its default, so an export of
         // an all-SDR setup stays free of color-mode/rgb-range noise.
-        push_if_non_default(&mut lines, "color-mode", &monitor.color_mode, "default");
-        push_if_non_default(&mut lines, "rgb-range", &monitor.rgb_range, "auto");
+        push_if_non_default(
+            &mut lines,
+            "color-mode",
+            monitor.color_mode,
+            ColorMode::Default,
+        );
+        push_if_non_default(&mut lines, "rgb-range", monitor.rgb_range, RgbRange::Auto);
         lines.push(String::new());
     }
 
@@ -217,8 +232,8 @@ mod tests {
             serial: "0".to_string(),
             display_name: String::new(),
             modes: vec![mode("1920x1080@60")],
-            color_mode: "default".to_string(),
-            rgb_range: "auto".to_string(),
+            color_mode: Some(ColorMode::Default),
+            rgb_range: Some(RgbRange::Auto),
         }
     }
 
@@ -343,8 +358,8 @@ mod tests {
     #[test]
     fn exports_a_non_default_color_mode_and_rgb_range() {
         let mut hdr_monitor = monitor("DP-1", "P2710S");
-        hdr_monitor.color_mode = "bt2100".to_string();
-        hdr_monitor.rgb_range = "full".to_string();
+        hdr_monitor.color_mode = Some(ColorMode::Bt2100);
+        hdr_monitor.rgb_range = Some(RgbRange::Full);
         let state = State {
             monitors: vec![hdr_monitor],
             logical_monitors: vec![LogicalMonitor {
@@ -373,6 +388,35 @@ mod tests {
     fn omits_color_mode_and_rgb_range_when_default() {
         let state = State {
             monitors: vec![monitor("DP-1", "P2710S")],
+            logical_monitors: vec![LogicalMonitor {
+                x: 0,
+                y: 0,
+                scale: 1.0,
+                transform: 0,
+                primary: true,
+                specs: vec![(
+                    "DP-1".to_string(),
+                    "LHC".to_string(),
+                    "P2710S".to_string(),
+                    "0".to_string(),
+                )],
+            }],
+            layout_mode: None,
+            supports_changing_layout_mode: false,
+        };
+
+        let (document, _) = export_toml(&state);
+        assert!(!document.contains("color-mode"));
+        assert!(!document.contains("rgb-range"));
+    }
+
+    #[test]
+    fn omits_color_mode_and_rgb_range_when_unrecognized() {
+        let mut unrecognized = monitor("DP-1", "P2710S");
+        unrecognized.color_mode = None;
+        unrecognized.rgb_range = None;
+        let state = State {
+            monitors: vec![unrecognized],
             logical_monitors: vec![LogicalMonitor {
                 x: 0,
                 y: 0,
