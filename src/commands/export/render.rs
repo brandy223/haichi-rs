@@ -41,6 +41,14 @@ fn slug(text: &str, fallback: &str) -> String {
     }
 }
 
+/// Pushes a key/value pair to the TOML document if the value is non-empty and
+/// not equal to the default. The value is quoted and escaped as a TOML basic string.
+fn push_if_non_default(lines: &mut Vec<String>, key: &str, value: &str, default: &str) {
+    if !value.is_empty() && value != default {
+        lines.push(format!("{key} = {}", toml_string(value)));
+    }
+}
+
 /// Quotes and escapes a TOML basic string.
 fn toml_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
@@ -160,12 +168,8 @@ pub fn export_toml(state: &State) -> (String, Vec<String>) {
         }
         // Only written when the monitor is off its default, so an export of
         // an all-SDR setup stays free of color-mode/rgb-range noise.
-        if !monitor.color_mode.is_empty() && monitor.color_mode != "default" {
-            lines.push(format!("color-mode = {}", toml_string(&monitor.color_mode)));
-        }
-        if !monitor.rgb_range.is_empty() && monitor.rgb_range != "auto" {
-            lines.push(format!("rgb-range = {}", toml_string(&monitor.rgb_range)));
-        }
+        push_if_non_default(&mut lines, "color-mode", &monitor.color_mode, "default");
+        push_if_non_default(&mut lines, "rgb-range", &monitor.rgb_range, "auto");
         lines.push(String::new());
     }
 

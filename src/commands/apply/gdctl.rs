@@ -52,6 +52,17 @@ pub fn build_command(
     cmd
 }
 
+/// Formats a luminance value for `gdctl pref --luminance`.
+/// If the value is an integer, it is formatted without a decimal point.
+/// Otherwise, it is formatted with a decimal point.
+fn fmt_luminance(value: f64) -> String {
+    if value.fract() == 0.0 {
+        format!("{value:.0}")
+    } else {
+        format!("{value}")
+    }
+}
+
 /// Builds one `gdctl pref` invocation per resolved screen that declares a
 /// luminance. `pref` is a separate command from `set` — per gdctl(1),
 /// `--luminance` applies to "the current color mode", so these must run
@@ -67,7 +78,7 @@ pub fn build_pref_commands(resolved: &[Resolved]) -> Vec<Vec<String>> {
                 "--monitor".to_string(),
                 item.monitor.connector.clone(),
                 "--luminance".to_string(),
-                fmt_scale(luminance),
+                fmt_luminance(luminance),
             ])
         })
         .collect()
@@ -253,5 +264,13 @@ mod tests {
                 "400".to_string(),
             ]]
         );
+    }
+
+    #[test]
+    fn fmt_luminance_does_not_silently_saturate_non_finite_values() {
+        assert_eq!(fmt_luminance(f64::INFINITY), "inf");
+        assert_eq!(fmt_luminance(f64::NAN), "NaN");
+        assert_eq!(fmt_luminance(400.0), "400");
+        assert_eq!(fmt_luminance(400.5), "400.5");
     }
 }

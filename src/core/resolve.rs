@@ -109,7 +109,7 @@ pub fn resolve<'a>(
     }
 
     if !problems.is_empty() {
-        return Err(ConfigError::new(problems));
+        return Err(ConfigError::InvalidFieldValues(problems));
     }
 
     Ok((resolved, absent))
@@ -255,11 +255,10 @@ mod tests {
         ]);
 
         let err = resolve(&layout, &state).unwrap_err();
-        assert!(
-            err.problems
-                .iter()
-                .any(|p| p.contains("add a 'connector' key"))
-        );
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("add a 'connector' key")));
     }
 
     #[test]
@@ -312,11 +311,10 @@ mod tests {
         )]);
 
         let err = resolve(&layout, &state).unwrap_err();
-        assert!(
-            err.problems
-                .iter()
-                .any(|p| p.contains("is not supported by"))
-        );
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("is not supported by")));
     }
 
     #[test]
@@ -367,7 +365,10 @@ mod tests {
         });
 
         let err = resolve(&layout, &state).unwrap_err();
-        assert!(err.problems.iter().any(|p| p.contains("both resolve to")));
+        let ConfigError::InvalidFieldValues(problems) = &err else {
+            panic!("expected InvalidFieldValues, got: {err:?}");
+        };
+        assert!(problems.iter().any(|p| p.contains("both resolve to")));
     }
 
     #[test]

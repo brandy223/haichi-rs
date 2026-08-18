@@ -172,7 +172,11 @@ so it means "re-run `GetCurrentState`".
   luminance property to read (confirmed against a live Mutter 49.7 session —
   it is set-only, via `gdctl pref`); add it back by hand after a re-`export`.
   `color-mode` and `rgb-range` *are* read back (only when off their default,
-  same as `primary`).
+  same as `primary`) — except `color-mode = "sdr-native"`: this Mutter build's
+  own `gdctl set --color-mode` doesn't offer it yet (only `default`/`bt2100`),
+  so no wire value for it has been observed, and a monitor actually in that
+  mode on some future Mutter build would export as if untouched. (See
+  `core::state::COLOR_MODE_VALUES`, code-review fix trace.)
 
 ## Roadmap
 
@@ -192,8 +196,8 @@ Not yet implemented, roughly in order of likely usefulness:
   sequence `haichi apply` calls itself.
 - [x] **`color-mode` / `rgb-range` / luminance** modelling — `color-mode`
   (HDR is `bt2100`) and `rgb-range` are set via `gdctl set` and read back by
-  `export`; `luminance` is set via a follow-up `gdctl pref` call but, per
-  Limitations, cannot be read back.
+  `export` (`sdr-native` excepted, see Limitations); `luminance` is set via a
+  follow-up `gdctl pref` call but, per Limitations, cannot be read back.
 - [ ] **GDM greeter config** — optional support for
   `/var/lib/gdm/.config/monitors.xml`, so the greeter's layout can be managed
   the same way as the session's.

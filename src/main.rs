@@ -29,9 +29,7 @@ fn main() -> ExitCode {
         Ok(Status::Ok) => ExitCode::from(EXIT_OK),
         Ok(Status::Failed) => ExitCode::from(EXIT_FAILED),
         Err(AppError::Config(e)) => {
-            for problem in &e.problems {
-                warn(problem);
-            }
+            warn(&e.to_string());
             ExitCode::from(EXIT_CONFIG)
         }
         Err(err) => {
