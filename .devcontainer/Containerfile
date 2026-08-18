@@ -92,12 +92,9 @@ alias gps='git push'
 
 EOF
 
-# Copy p10k configuration
-COPY --chown=${USERNAME}:${USERNAME} .p10k.zsh /home/${USERNAME}/.p10k.zsh
-RUN chown "${USERNAME}:${USERNAME}" /home/${USERNAME}/.zshrc
-
-RUN mkdir -p /home/${USERNAME}/workspace && \
-    chown -R ${USERNAME}:${USERNAME} /home/${USERNAME}/workspace
+RUN mkdir -p /home/${USERNAME}/.local/bin && \
+    chown "${USERNAME}:${USERNAME}" /home/${USERNAME}/.zshrc && \
+    chown -R "${USERNAME}:${USERNAME}" /home/${USERNAME}/.local
 
 # Install Claude Code
 USER ${USERNAME}
