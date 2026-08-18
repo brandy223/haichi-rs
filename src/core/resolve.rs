@@ -126,7 +126,7 @@ pub fn fmt_scale(value: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::{ColorMode, RgbRange, Screen};
+    use crate::core::config::{ColorMode, RgbRange, Screen, Transform};
     use crate::core::state::Mode;
 
     fn mode(id: &str, scales: &[f64]) -> Mode {
@@ -178,7 +178,7 @@ mod tests {
             x: 0,
             y: 0,
             scale: 1.0,
-            transform: "normal".to_string(),
+            transform: Transform::Normal,
             primary: true,
             connector: connector.map(str::to_string),
             color_mode: None,

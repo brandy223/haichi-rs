@@ -31,7 +31,7 @@ pub fn build_command(
         cmd.push("--scale".to_string());
         cmd.push(fmt_scale(item.scale));
         cmd.push("--transform".to_string());
-        cmd.push(screen.transform.clone());
+        cmd.push(screen.transform.to_string());
         if screen.primary {
             cmd.push("--primary".to_string());
         }
@@ -87,7 +87,7 @@ pub fn build_pref_commands(resolved: &[Resolved]) -> Vec<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::config::{ColorMode, RgbRange, Screen};
+    use crate::core::config::{ColorMode, RgbRange, Screen, Transform};
     use crate::core::state::Monitor;
 
     fn screen(name: &str, primary: bool) -> Screen {
@@ -100,7 +100,7 @@ mod tests {
             x: 0,
             y: 0,
             scale: 1.25,
-            transform: "270".to_string(),
+            transform: Transform::_270,
             primary,
             connector: None,
             color_mode: None,

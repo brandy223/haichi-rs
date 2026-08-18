@@ -22,23 +22,49 @@ pub fn default_path() -> PathBuf {
         .join("config.toml")
 }
 
-pub const TRANSFORMS: [&str; 8] = [
-    "normal",
-    "90",
-    "180",
-    "270",
-    "flipped",
-    "flipped-90",
-    "flipped-180",
-    "flipped-270",
-];
+/// Values accepted by `gdctl set --transform`, per gdctl(1). The `lowercase`
+/// display/parsing reproduces gdctl's own spelling for `90`/`180`/`270`
+/// (`90` <-> `"90"`) with no per-variant literal needed — except
+/// `Flipped90`/`Flipped180`/`Flipped270`, which need a `-` (`"flipped-90"`),
+/// so those three get an explicit `kebab-case` override.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
+#[display(rename_all = "kebab-case")]
+#[from_str(rename_all = "kebab-case")]
+pub enum Transform {
+    Normal = 0,
+    #[display(rename_all = "lowercase")]
+    #[from_str(rename_all = "lowercase")]
+    _90 = 1,
+    #[display(rename_all = "lowercase")]
+    #[from_str(rename_all = "lowercase")]
+    _180 = 2,
+    #[display(rename_all = "lowercase")]
+    #[from_str(rename_all = "lowercase")]
+    _270 = 3,
+    Flipped = 4,
+    Flipped90 = 5,
+    Flipped180 = 6,
+    Flipped270 = 7,
+}
+
+impl Transform {
+    pub const ALL: [Transform; 8] = [
+        Transform::Normal,
+        Transform::_90,
+        Transform::_180,
+        Transform::_270,
+        Transform::Flipped,
+        Transform::Flipped90,
+        Transform::Flipped180,
+        Transform::Flipped270,
+    ];
+}
 
 /// Values accepted by `gdctl set --color-mode`, per gdctl(1). `Bt2100` is
 /// HDR. `lowercase` display/parsing reproduces gdctl's own spelling for
-/// `Default`/`Bt1200` (`Bt1200` <-> `"bt1200"`) with no per-variant
-/// literal needed — except `SdrNative` needing a `-` such as `sdr-native`
-///  (verified: this is what broke `.parse()` on the first attempt), so
-/// that one needs an explicit override to match gdctl's actual `"sdr-native"`.
+/// `Default`/`Bt2100` (`Bt2100` <-> `"bt2100"`) with no per-variant literal
+/// needed — except `SdrNative`, which needs a `-` (`"sdr-native"`), so that
+/// one gets an explicit `kebab-case` override.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Display, FromStr)]
 #[display(rename_all = "lowercase")]
 #[from_str(rename_all = "lowercase")]
@@ -104,7 +130,7 @@ pub struct Screen {
     pub x: i32,
     pub y: i32,
     pub scale: f64,
-    pub transform: String,
+    pub transform: Transform,
     pub primary: bool,
     /// Optional pin, breaks identity ties.
     pub connector: Option<String>,
@@ -146,32 +172,12 @@ fn scalar_string(value: &Value) -> String {
     }
 }
 
-/// Validates that a string field is one of a set of allowed values, pushing
-/// a problem if not. Used for `transform` and the enum-valued fields.
-/// `allowed` is a slice of string literals, not the enum variants themselves, so
-/// the error message can list the allowed values exactly as they appear in the TOML.
-/// `where_` is a string describing the context (e.g., `[screens.main]`) for the error message.
-/// `problems` is a mutable vector to which the error message will be pushed if the validation fails.
-fn validate_one_of(
-    value: &str,
-    field: &str,
-    allowed: &[&str],
-    where_: &str,
-    problems: &mut Vec<String>,
-) {
-    if !allowed.contains(&value) {
-        problems.push(format!(
-            "{where_}: {field} {value:?} is not one of {}",
-            allowed.join(", ")
-        ));
-    }
-}
-
 /// Reads and parses an optional enum-valued field (`color-mode`,
-/// `rgb-range`): absent stays `None`, present-but-unparseable pushes a
-/// problem listing the allowed values and returns `None` (discarded along
-/// with the rest of the screen once `problems` is non-empty, same as every
-/// other field here).
+/// `rgb-range`, `transform`): absent stays `None`, present-but-unparseable
+/// pushes a problem listing the allowed values and returns `None`
+/// (discarded along with the rest of the screen once `problems` is
+/// non-empty, same as every other field here). `transform` has a default
+/// unlike the other two, so its caller chains `.unwrap_or(Transform::Normal)`.
 fn parse_enum_field<T>(
     raw: Option<&Value>,
     field: &str,
@@ -305,11 +311,14 @@ fn parse_layout(raw: Value) -> Result<Layout, ConfigError> {
             continue;
         }
 
-        let transform = body
-            .get("transform")
-            .map(scalar_string)
-            .unwrap_or_else(|| "normal".to_string());
-        validate_one_of(&transform, "transform", &TRANSFORMS, &where_, &mut problems);
+        let transform = parse_enum_field(
+            body.get("transform"),
+            "transform",
+            &Transform::ALL,
+            &where_,
+            &mut problems,
+        )
+        .unwrap_or(Transform::Normal);
 
         let x = number(&mut problems, body.get("x"), "x", &where_, 0.0) as i32;
         let y = number(&mut problems, body.get("y"), "y", &where_, 0.0) as i32;
@@ -445,7 +454,7 @@ mod tests {
         assert_eq!(screen.vendor, "LHC");
         assert_eq!(screen.x, 0);
         assert_eq!(screen.scale, 1.0);
-        assert_eq!(screen.transform, "normal");
+        assert_eq!(screen.transform, Transform::Normal);
         assert!(screen.primary);
         assert!(screen.connector.is_none());
     }
@@ -594,8 +603,9 @@ mod tests {
 
     #[test]
     fn accepts_an_unquoted_numeric_transform() {
-        // `transform = 270` (no quotes) still matches the string "270", the
-        // same loose coercion the original Python tool applied via `str()`.
+        // `transform = 270` (no quotes) still coerces to the string "270"
+        // before parsing (the same loose coercion the original Python tool
+        // applied via `str()`), which still parses to `Transform::_270`.
         let layout = parse(
             r#"
             [screens.main]
@@ -608,7 +618,7 @@ mod tests {
             "#,
         )
         .expect("numeric transform should coerce to a string");
-        assert_eq!(layout.screens[0].transform, "270");
+        assert_eq!(layout.screens[0].transform, Transform::_270);
     }
 
     #[test]
@@ -812,6 +822,25 @@ mod tests {
         }
         for range in RgbRange::ALL {
             assert_eq!(range.to_string().parse::<RgbRange>().unwrap(), range);
+        }
+    }
+
+    #[test]
+    fn transform_matches_gdctl_spelling_and_round_trips() {
+        assert_eq!(Transform::Normal.to_string(), "normal");
+        assert_eq!(Transform::_90.to_string(), "90");
+        assert_eq!(Transform::_180.to_string(), "180");
+        assert_eq!(Transform::_270.to_string(), "270");
+        assert_eq!(Transform::Flipped.to_string(), "flipped");
+        assert_eq!(Transform::Flipped90.to_string(), "flipped-90");
+        assert_eq!(Transform::Flipped180.to_string(), "flipped-180");
+        assert_eq!(Transform::Flipped270.to_string(), "flipped-270");
+
+        for transform in Transform::ALL {
+            assert_eq!(
+                transform.to_string().parse::<Transform>().unwrap(),
+                transform
+            );
         }
     }
 }

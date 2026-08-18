@@ -1,21 +1,21 @@
 //! Renders the live layout as an annotated TOML document.
 
-use crate::core::config::{ColorMode, RgbRange};
+use crate::core::config::{ColorMode, RgbRange, Transform};
 use crate::core::resolve::fmt_scale;
 use crate::core::state::State;
 
-fn transform_name(code: u32) -> &'static str {
-    match code {
-        0 => "normal",
-        1 => "90",
-        2 => "180",
-        3 => "270",
-        4 => "flipped",
-        5 => "flipped-90",
-        6 => "flipped-180",
-        7 => "flipped-270",
-        _ => "normal",
-    }
+/// `logical_monitors[].transform` is a `uint32` matching Wayland's
+/// `wl_output.transform` / Mutter's `MetaMonitorTransform` enum, whose order
+/// is exactly `Transform::ALL`'s declaration order — a stable, foundational
+/// protocol enum (unlike `color-mode`/`rgb-range`'s sparse, version-varying
+/// wire codes, which need their own lookup table in `core::state`), so
+/// indexing into `Transform::ALL` is the whole mapping. Falls back to
+/// `Normal` for any (in practice unreachable) out-of-range code.
+fn transform_from_wire(code: u32) -> Transform {
+    Transform::ALL
+        .get(code as usize)
+        .copied()
+        .unwrap_or(Transform::Normal)
 }
 
 /// Ports names to TOML table-key slugs: runs of non-alphanumeric ASCII
@@ -171,7 +171,7 @@ pub fn export_toml(state: &State) -> (String, Vec<String>) {
         lines.push(format!("scale = {}", fmt_scale(logical.scale)));
         lines.push(format!(
             "transform = {}",
-            toml_string(transform_name(logical.transform))
+            toml_string(&transform_from_wire(logical.transform).to_string())
         ));
         if logical.primary {
             lines.push("primary = true".to_string());
@@ -209,6 +209,19 @@ mod tests {
         assert_eq!(toml_string("plain"), "\"plain\"");
         assert_eq!(toml_string("a\"b\\c"), "\"a\\\"b\\\\c\"");
         assert_eq!(toml_string("line\nbreak"), "\"line\\nbreak\"");
+    }
+
+    #[test]
+    fn transform_from_wire_matches_wayland_output_transform_order() {
+        assert_eq!(transform_from_wire(0), Transform::Normal);
+        assert_eq!(transform_from_wire(1), Transform::_90);
+        assert_eq!(transform_from_wire(2), Transform::_180);
+        assert_eq!(transform_from_wire(3), Transform::_270);
+        assert_eq!(transform_from_wire(4), Transform::Flipped);
+        assert_eq!(transform_from_wire(5), Transform::Flipped90);
+        assert_eq!(transform_from_wire(6), Transform::Flipped180);
+        assert_eq!(transform_from_wire(7), Transform::Flipped270);
+        assert_eq!(transform_from_wire(99), Transform::Normal);
     }
 
     fn mode(id: &str) -> Mode {
