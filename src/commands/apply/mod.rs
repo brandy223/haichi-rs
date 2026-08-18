@@ -1,4 +1,5 @@
 use std::io::Write as _;
+use std::os::unix::process::ExitStatusExt as _;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -42,11 +43,19 @@ fn run_gdctl(cmd: &[String]) -> Result<bool, AppError> {
     if status.success() {
         return Ok(true);
     }
-    warn(&format!(
-        "gdctl exited {}: {}",
-        status.code().unwrap_or(-1),
-        describe_cmd(cmd)
-    ));
+    // code-review follow-up (Copilot, PR #8): `status.code()` is `None` when
+    // the process was killed by a signal, not just "exited with an unusual
+    // code" — `unwrap_or(-1)` printed a fake "-1" exit code for that case,
+    // which isn't a real exit code gdctl could ever produce (POSIX exit
+    // codes are 0-255) and reads as if gdctl chose to exit that way.
+    let reason = match status.code() {
+        Some(code) => format!("exited {code}"),
+        None => match status.signal() {
+            Some(signal) => format!("was killed by signal {signal}"),
+            None => "exited for an unknown reason".to_string(),
+        },
+    };
+    warn(&format!("gdctl {reason}: {}", describe_cmd(cmd)));
     Ok(false)
 }
 

@@ -190,7 +190,7 @@ Not yet implemented, roughly in order of likely usefulness:
   reference screen's geometry changes.
 - [ ] **`MonitorsChanged` listener** — a long-running mode that re-runs
   `GetCurrentState` on that signal and re-applies, for the case where hotplug
-  picks the wrong layout at the Mutter level.
+  picks the wrong layout at the Mutter level (`haichi watch`).
 - [ ] **Multiple layouts per invocation** — try each file in a set and apply
   the first whose screens are all present, instead of the caller having to
   sequence `haichi apply` calls itself.
@@ -216,6 +216,7 @@ Not yet implemented, roughly in order of likely usefulness:
   supports), instead of hand-typing exact-match strings like
   `2560x1440@240.002`. Builds on `list` (for the live data) and `check` (for
   the same validation, reused instead of duplicated).
+- [ ] **`gdctl` replacement** — a pure-Rust implementation of the `gdctl` subcommands used here, so `haichi` can apply layouts without shelling out to an external binary. This would also allow for more advanced features like batching multiple changes in a single D-Bus transaction.
 
 ## Rebuilding `monitors.xml`
 

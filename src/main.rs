@@ -12,7 +12,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-use crate::core::error::AppError;
+use crate::core::error::{AppError, ConfigError};
 use cli::Cli;
 use commands::{Status, dispatch, warn};
 
@@ -28,6 +28,19 @@ fn main() -> ExitCode {
     match result {
         Ok(Status::Ok) => ExitCode::from(EXIT_OK),
         Ok(Status::Failed) => ExitCode::from(EXIT_FAILED),
+        // code-review follow-up (Copilot, PR #8, suppressed but still
+        // valid): `InvalidFieldValues`'s Display impl uses `{0:?}` (its
+        // only sane option — thiserror's format strings can't call
+        // `.join()` on a field), so `e.to_string()` alone would collapse
+        // every problem into one Rust-debug-formatted line
+        // (`["...", "...", ...]`) instead of the one-`haichi:`-line-per-
+        // problem output this error type's own doc comment promises.
+        Err(AppError::Config(ConfigError::InvalidFieldValues(problems))) => {
+            for problem in &problems {
+                warn(problem);
+            }
+            ExitCode::from(EXIT_CONFIG)
+        }
         Err(AppError::Config(e)) => {
             warn(&e.to_string());
             ExitCode::from(EXIT_CONFIG)
