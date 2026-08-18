@@ -43,11 +43,6 @@ fn run_gdctl(cmd: &[String]) -> Result<bool, AppError> {
     if status.success() {
         return Ok(true);
     }
-    // code-review follow-up (Copilot, PR #8): `status.code()` is `None` when
-    // the process was killed by a signal, not just "exited with an unusual
-    // code" — `unwrap_or(-1)` printed a fake "-1" exit code for that case,
-    // which isn't a real exit code gdctl could ever produce (POSIX exit
-    // codes are 0-255) and reads as if gdctl chose to exit that way.
     let reason = match status.code() {
         Some(code) => format!("exited {code}"),
         None => match status.signal() {
