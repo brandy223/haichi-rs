@@ -64,10 +64,9 @@ impl Transform {
 }
 
 /// Values the config schema accepts for `color-mode`. gdctl(1) documents
-/// `default`, `sdr-native` and `bt2100`, but — code-review follow-up
-/// (Copilot, PR #8) — actual acceptance depends on the installed
-/// gdctl/Mutter version, not just this list: e.g. the Mutter 49.7 build this
-/// was verified against only accepts `default`/`bt2100` for
+/// `default`, `sdr-native` and `bt2100`, but actual acceptance depends on the
+/// installed gdctl/Mutter version, not just this list: e.g. the Mutter 49.7
+/// build this was verified against only accepts `default`/`bt2100` for
 /// `gdctl set --color-mode` (`SdrNative` is kept for forward-compat, not
 /// because it's confirmed to work everywhere — `gdctl` itself is the final
 /// arbiter and will reject it with its own error on a build that doesn't
